@@ -1,0 +1,27 @@
+{
+  "name": "cipam-ipr-translator",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nsaky/cipam-ipr-translator.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/nsaky/cipam-ipr-translator/issues"
+  },
+  "homepage": "https://github.com/nsaky/cipam-ipr-translator#readme",
+  "dependencies": {
+    "docx": "^9.15.3",
+    "mammoth": "^1.13.0",
+    "pdf-parse": "^2.4.5",
+    "puppeteer": "^25.17.0",
+    "tesseract.js": "^7.0.0"
+  }
+}
