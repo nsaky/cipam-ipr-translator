@@ -206,9 +206,18 @@ export const Dashboard = () => {
                       <td className="text-secondary">{documentService.formatDate(doc.uploadDate)}</td>
                       <td>{getStatusBadge(doc.status)}</td>
                       <td className="text-right">
-                        <Link to={`/documents/${doc.id}`} className="btn btn-secondary btn-xs">
-                          Details
-                        </Link>
+                        <div className="table-actions-inline">
+                          <Link
+                            to={`/documents/${doc.id}/languages`}
+                            className="btn btn-primary btn-xs"
+                            title="Translate document into regional languages"
+                          >
+                            Translate
+                          </Link>
+                          <Link to={`/documents/${doc.id}`} className="btn btn-secondary btn-xs">
+                            Details
+                          </Link>
+                        </div>
                       </td>
                     </tr>
                   ))}

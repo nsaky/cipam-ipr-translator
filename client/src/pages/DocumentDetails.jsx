@@ -144,24 +144,26 @@ export const DocumentDetails = () => {
             </p>
 
             <div className="workflow-status-callout">
-              <span className="workflow-step-num">Next Milestone: Part 3</span>
-              <h4 className="workflow-step-title">Language Selection & Text Extraction</h4>
+              <span className="workflow-step-num">Step 2 of 4</span>
+              <h4 className="workflow-step-title">Language Selection & Translation</h4>
               <p className="workflow-step-desc">
-                In the next part, target languages (Hindi, Marathi, Bengali, Gujarati, Tamil, Telugu)
-                will be configured here, and sentence extraction will be initiated through Person B's
-                processing services.
+                Select from the 6 agreed regional Indian languages (Hindi, Marathi, Bengali, Gujarati, Tamil, Telugu)
+                to begin sentence extraction and automated contextual translation.
               </p>
             </div>
 
             <div className="workflow-actions-wrap">
-              <button
-                type="button"
-                className="btn btn-secondary btn-block"
-                disabled
-                title="Available in Milestone 3"
+              <Link
+                to={`/documents/${document.id}/languages`}
+                className="btn btn-primary btn-block"
               >
-                Configure Languages (Part 3)
-              </button>
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <line x1="2" y1="12" x2="22" y2="12"></line>
+                  <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+                </svg>
+                Translate Document
+              </Link>
               <Link to="/documents" className="btn btn-secondary btn-block">
                 View All Documents
               </Link>
