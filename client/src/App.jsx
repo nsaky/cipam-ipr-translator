@@ -9,6 +9,7 @@ import Documents from './pages/Documents';
 import UploadDocument from './pages/UploadDocument';
 import DocumentDetails from './pages/DocumentDetails';
 import LanguageSelection from './pages/LanguageSelection';
+import TranslationWorkflow from './pages/TranslationWorkflow';
 
 function App() {
   return (
@@ -66,6 +67,15 @@ function App() {
             element={
               <ProtectedRoute>
                 <LanguageSelection />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/documents/:id/translate"
+            element={
+              <ProtectedRoute>
+                <TranslationWorkflow />
               </ProtectedRoute>
             }
           />
