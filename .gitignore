@@ -1,7 +1,10 @@
 *.env
+*.env.local
 *.claude
 skills-lock.json
 node_modules/
 output-*.pdf
 *.traineddata
 samples/
+dist/
+.DS_Store
