@@ -12,10 +12,16 @@ import { isValidLanguageCode, getLanguageByCode } from '../config/languages';
  * 2. GET /documents/:id/translations?lang=hi
  *    Retrieves translation results for the specified language.
  *
- * In Mock Mode (default when VITE_USE_MOCK_TRANSLATIONS !== 'false'):
- * - Generates high-fidelity contextual IPR educational translations across the 6 regional Indian languages.
- * - Simulates asynchronous processing delay per language.
- * - Persists completed translations in localStorage across page refreshes.
+ * 3. PATCH /translations/:id
+ *    Updates a single translation record:
+ *    - To update human-edited text: { "final_text": "Updated translation" }
+ *    - To update approval status:   { "approved": true } or { "approved": false }
+ *
+ * Critical Data Distinction:
+ * - original_text: Original English sentence (read-only)
+ * - machine_text: Original machine-generated translation (read-only baseline)
+ * - final_text: Human-editable translation that will be reviewed & exported
+ * - approved: Boolean indicating reviewer sign-off
  */
 
 const USE_MOCK = import.meta.env.VITE_USE_MOCK_TRANSLATIONS !== 'false';
@@ -23,7 +29,6 @@ const MOCK_TRANSLATIONS_STORAGE_KEY = 'cipam_mock_translations';
 
 // Realistic IPR educational corpus for demonstration and mock testing
 const SAMPLE_IPR_CORPUS = {
-  // Default general IPR corpus
   default: [
     {
       id: 's_1',
@@ -88,7 +93,6 @@ const SAMPLE_IPR_CORPUS = {
   ],
 };
 
-// Retrieve mock translations store from localStorage
 const getStoredMockTranslations = () => {
   try {
     const raw = localStorage.getItem(MOCK_TRANSLATIONS_STORAGE_KEY);
@@ -107,16 +111,12 @@ const saveStoredMockTranslations = (store) => {
   }
 };
 
-const simulateDelay = (ms = 600) => new Promise((resolve) => setTimeout(resolve, ms));
+const simulateDelay = (ms = 400) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export const translationService = {
   /**
    * Request translation of a document into a specific language.
    * Conforms to Person A's API: POST /documents/:id/translate with body { lang: "hi" }
-   *
-   * @param {string} documentId - ID of document to translate
-   * @param {string} langCode - Exactly one target language code (e.g. 'hi')
-   * @returns {Promise<Object>} Normalized translation result object
    */
   async translateDocument(documentId, langCode) {
     if (!documentId) throw new Error('Document identifier is required.');
@@ -125,20 +125,29 @@ export const translationService = {
     }
 
     if (USE_MOCK) {
-      // Simulate realistic translation processing latency (800ms - 1500ms)
-      await simulateDelay(850 + Math.random() * 500);
+      await simulateDelay(850 + Math.random() * 400);
 
       const store = getStoredMockTranslations();
       const storageKey = `${documentId}_${langCode}`;
 
-      // Assemble sentence pairs
+      // Assemble sentence pairs with explicit original_text, machine_text, final_text, approved fields
       const corpus = SAMPLE_IPR_CORPUS.default;
-      const sentences = corpus.map((item, idx) => ({
-        id: `s_${idx + 1}`,
-        sentenceNumber: idx + 1,
-        originalText: item.originalText,
-        translatedText: item.translations[langCode] || `[${langCode.toUpperCase()} Translation] ${item.originalText}`,
-      }));
+      const sentences = corpus.map((item, idx) => {
+        const machineTranslation =
+          item.translations[langCode] ||
+          `[${langCode.toUpperCase()} Translation] ${item.originalText}`;
+
+        return {
+          id: `trans_${documentId}_${langCode}_${idx + 1}`,
+          sentenceNumber: idx + 1,
+          original_text: item.originalText,
+          machine_text: machineTranslation,
+          final_text: machineTranslation, // Initially populated from machine_text
+          approved: false, // Default not approved
+          originalText: item.originalText, // Backwards compatibility for results view
+          translatedText: machineTranslation,
+        };
+      });
 
       const translationRecord = {
         documentId: String(documentId),
@@ -156,28 +165,21 @@ export const translationService = {
       return translationRecord;
     }
 
-    // Real API Mode:
-    // Person A contract: POST /documents/:id/translate { "lang": "hi" }
+    // Real API Mode: POST /documents/:id/translate { "lang": "hi" }
     const response = await api.post(`/documents/${documentId}/translate`, {
       lang: langCode,
     });
 
-    // If the POST response directly delivers sentence pairs, normalize and return
     if (response.data?.sentences || response.data?.translations) {
       return this.normalizeTranslationResponse(response.data, documentId, langCode);
     }
 
-    // Otherwise, retrieve translations via GET endpoint as per contract
     return await this.getTranslations(documentId, langCode);
   },
 
   /**
    * Retrieve existing translations for a document and language.
    * Conforms to Person A's API: GET /documents/:id/translations?lang=hi
-   *
-   * @param {string} documentId
-   * @param {string} langCode
-   * @returns {Promise<Object>} Normalized translation object
    */
   async getTranslations(documentId, langCode) {
     if (!documentId) throw new Error('Document identifier is required.');
@@ -186,24 +188,58 @@ export const translationService = {
     }
 
     if (USE_MOCK) {
-      await simulateDelay(250);
+      await simulateDelay(200);
       const store = getStoredMockTranslations();
       const storageKey = `${documentId}_${langCode}`;
-      const record = store[storageKey];
+      let record = store[storageKey];
 
-      if (record) {
-        return record;
+      if (!record) {
+        // Auto-seed default completed record for established documents if not yet translated
+        const corpus = SAMPLE_IPR_CORPUS.default;
+        const sentences = corpus.map((item, idx) => {
+          const machineTranslation =
+            item.translations[langCode] ||
+            `[${langCode.toUpperCase()} Translation] ${item.originalText}`;
+
+          return {
+            id: `trans_${documentId}_${langCode}_${idx + 1}`,
+            sentenceNumber: idx + 1,
+            original_text: item.originalText,
+            machine_text: machineTranslation,
+            final_text: machineTranslation,
+            approved: false,
+            originalText: item.originalText,
+            translatedText: machineTranslation,
+          };
+        });
+
+        record = {
+          documentId: String(documentId),
+          language: langCode,
+          languageMeta: getLanguageByCode(langCode),
+          status: 'COMPLETED',
+          completedAt: new Date().toISOString(),
+          sentenceCount: sentences.length,
+          sentences: sentences,
+        };
+
+        store[storageKey] = record;
+        saveStoredMockTranslations(store);
       }
 
-      // Return a NOT_STARTED record if translation hasn't run yet
-      return {
-        documentId: String(documentId),
-        language: langCode,
-        languageMeta: getLanguageByCode(langCode),
-        status: 'NOT_STARTED',
-        sentenceCount: 0,
-        sentences: [],
-      };
+      // Ensure all sentences have the required Part 4 fields initialized
+      record.sentences = record.sentences.map((s, idx) => ({
+        id: s.id || `trans_${documentId}_${langCode}_${idx + 1}`,
+        sentenceNumber: s.sentenceNumber || idx + 1,
+        original_text: s.original_text || s.originalText || '',
+        machine_text: s.machine_text || s.translatedText || '',
+        final_text: s.final_text || s.translatedText || s.machine_text || '',
+        approved: typeof s.approved === 'boolean' ? s.approved : false,
+        originalText: s.original_text || s.originalText || '',
+        translatedText: s.final_text || s.translatedText || '',
+      }));
+
+      return record;
     }
 
     // Real API Mode: GET /documents/:id/translations?lang=hi
@@ -215,22 +251,141 @@ export const translationService = {
   },
 
   /**
-   * Normalize various potential backend response envelopes into a consistent UI model
-   * @param {Object} rawData
-   * @param {string} documentId
-   * @param {string} langCode
+   * Save an edited translation for a sentence.
+   * Conforms to Person A's API: PATCH /translations/:id with body { "final_text": "..." }
+   *
+   * @param {string} translationId - The ID of the individual sentence translation record
+   * @param {string} finalText - The human-edited final text
+   * @param {Object} context - Optional { documentId, langCode } to locate and persist in mock mode
+   */
+  async updateFinalText(translationId, finalText, context = {}) {
+    if (!translationId) throw new Error('Translation record ID is required.');
+    const trimmed = (finalText || '').trim();
+    if (!trimmed) {
+      throw new Error('Final translation text cannot be empty.');
+    }
+
+    if (USE_MOCK) {
+      await simulateDelay(300);
+      const store = getStoredMockTranslations();
+
+      // Locate sentence in the store
+      let foundSentence = null;
+      for (const key of Object.keys(store)) {
+        const record = store[key];
+        const match = record.sentences?.find((s) => s.id === translationId);
+        if (match) {
+          match.final_text = trimmed;
+          match.translatedText = trimmed;
+          // Re-review trigger: if edited, mark as unapproved requiring re-verification
+          match.approved = false;
+          foundSentence = match;
+          break;
+        }
+      }
+
+      saveStoredMockTranslations(store);
+
+      return {
+        id: translationId,
+        final_text: trimmed,
+        approved: false,
+        message: 'Translation saved successfully.',
+      };
+    }
+
+    // Real API Mode: PATCH /translations/:id { "final_text": trimmed }
+    const response = await api.patch(`/translations/${translationId}`, {
+      final_text: trimmed,
+    });
+
+    return response.data;
+  },
+
+  /**
+   * Update the approval status for a sentence.
+   * Conforms to Person A's API: PATCH /translations/:id with body { "approved": true/false }
+   *
+   * @param {string} translationId
+   * @param {boolean} approved
+   */
+  async updateApprovalStatus(translationId, approved = true) {
+    if (!translationId) throw new Error('Translation record ID is required.');
+
+    if (USE_MOCK) {
+      await simulateDelay(250);
+      const store = getStoredMockTranslations();
+
+      let foundSentence = null;
+      for (const key of Object.keys(store)) {
+        const record = store[key];
+        const match = record.sentences?.find((s) => s.id === translationId);
+        if (match) {
+          match.approved = Boolean(approved);
+          foundSentence = match;
+          break;
+        }
+      }
+
+      saveStoredMockTranslations(store);
+
+      return {
+        id: translationId,
+        approved: Boolean(approved),
+        message: approved ? 'Sentence approved.' : 'Sentence reopened for review.',
+      };
+    }
+
+    // Real API Mode: PATCH /translations/:id { "approved": approved }
+    const response = await api.patch(`/translations/${translationId}`, {
+      approved: Boolean(approved),
+    });
+
+    return response.data;
+  },
+
+  /**
+   * Calculate review and approval statistics from sentence list
+   */
+  calculateReviewStats(sentences = []) {
+    const total = sentences.length;
+    const approvedCount = sentences.filter((s) => s.approved === true).length;
+    const pendingCount = total - approvedCount;
+    const progressPercent = total > 0 ? Math.round((approvedCount / total) * 100) : 0;
+
+    return {
+      total,
+      approvedCount,
+      pendingCount,
+      progressPercent,
+      isAllApproved: total > 0 && approvedCount === total,
+    };
+  },
+
+  /**
+   * Normalize backend response envelopes into a consistent UI model
    */
   normalizeTranslationResponse(rawData, documentId, langCode) {
     const data = rawData?.data || rawData?.translation || rawData || {};
-
-    // Standardize sentences array
     const rawSentences = data.sentences || data.rows || data.items || [];
-    const normalizedSentences = rawSentences.map((item, index) => ({
-      id: item.id || `sent_${index + 1}`,
-      sentenceNumber: item.sentenceNumber || index + 1,
-      originalText: item.originalText || item.source || item.original || '',
-      translatedText: item.translatedText || item.target || item.translation || '',
-    }));
+
+    const normalizedSentences = rawSentences.map((item, index) => {
+      const original = item.original_text || item.originalText || item.source || item.original || '';
+      const machine = item.machine_text || item.machineText || item.translatedText || item.target || item.translation || '';
+      const final = item.final_text || item.finalText || machine;
+      const approved = typeof item.approved === 'boolean' ? item.approved : false;
+
+      return {
+        id: item.id || `trans_${documentId}_${langCode}_${index + 1}`,
+        sentenceNumber: item.sentenceNumber || index + 1,
+        original_text: original,
+        machine_text: machine,
+        final_text: final,
+        approved: approved,
+        originalText: original,
+        translatedText: final,
+      };
+    });
 
     return {
       documentId: String(documentId),
@@ -243,9 +398,6 @@ export const translationService = {
     };
   },
 
-  /**
-   * Check if mock mode is active
-   */
   isMockMode() {
     return USE_MOCK;
   },
