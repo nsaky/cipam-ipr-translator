@@ -11,6 +11,7 @@ import DocumentDetails from './pages/DocumentDetails';
 import LanguageSelection from './pages/LanguageSelection';
 import TranslationWorkflow from './pages/TranslationWorkflow';
 import TranslationResults from './pages/TranslationResults';
+import TranslationReview from './pages/TranslationReview';
 
 function App() {
   return (
@@ -86,6 +87,15 @@ function App() {
             element={
               <ProtectedRoute>
                 <TranslationResults />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/documents/:id/review"
+            element={
+              <ProtectedRoute>
+                <TranslationReview />
               </ProtectedRoute>
             }
           />
