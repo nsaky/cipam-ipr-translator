@@ -4,7 +4,10 @@ import { AuthProvider } from './context/AuthContext';
 import { ProtectedRoute, PublicOnlyRoute } from './components/ProtectedRoute';
 import Login from './pages/Login';
 import Register from './pages/Register';
-import DashboardPlaceholder from './pages/DashboardPlaceholder';
+import Dashboard from './pages/Dashboard';
+import Documents from './pages/Documents';
+import UploadDocument from './pages/UploadDocument';
+import DocumentDetails from './pages/DocumentDetails';
 
 function App() {
   return (
@@ -34,12 +37,39 @@ function App() {
             path="/dashboard"
             element={
               <ProtectedRoute>
-                <DashboardPlaceholder />
+                <Dashboard />
               </ProtectedRoute>
             }
           />
 
-          {/* Default fallback: redirect to /dashboard (which redirects to /login if unauthenticated) */}
+          <Route
+            path="/documents"
+            element={
+              <ProtectedRoute>
+                <Documents />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/documents/:id"
+            element={
+              <ProtectedRoute>
+                <DocumentDetails />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/upload"
+            element={
+              <ProtectedRoute>
+                <UploadDocument />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* Default fallback: redirect to /dashboard */}
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
