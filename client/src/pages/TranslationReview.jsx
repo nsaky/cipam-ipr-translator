@@ -45,10 +45,45 @@ export const TranslationReview = () => {
   const [filterMode, setFilterMode] = useState('ALL'); // 'ALL' | 'PENDING' | 'APPROVED'
   const [activeSentenceIndex, setActiveSentenceIndex] = useState(0);
 
+  // Track unsaved sentence IDs: Set of sentence IDs that currently have unsaved changes
+  const [unsavedSentenceIds, setUnsavedSentenceIds] = useState(new Set());
+  const [pendingNavigation, setPendingNavigation] = useState(null); // { type: 'route'|'lang'|'sentence', target: any }
+
   // Operation loading state maps
   const [savingMap, setSavingMap] = useState({});
   const [approvingMap, setApprovingMap] = useState({});
   const [globalBanner, setGlobalBanner] = useState(null);
+
+  const hasUnsavedChanges = unsavedSentenceIds.size > 0;
+
+  // Browser refresh/close protection (beforeunload)
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (unsavedSentenceIds.size > 0) {
+        e.preventDefault();
+        e.returnValue = '';
+        return '';
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [unsavedSentenceIds]);
+
+  // Callback from SentenceReviewCard when a sentence's text changes
+  const handleSentenceUnsavedChange = useCallback((sentenceId, isDirty) => {
+    setUnsavedSentenceIds((prev) => {
+      const next = new Set(prev);
+      if (isDirty) {
+        next.add(sentenceId);
+      } else {
+        next.delete(sentenceId);
+      }
+      return next;
+    });
+  }, []);
 
   // 1. Fetch document if not passed in location state
   useEffect(() => {
@@ -121,11 +156,18 @@ export const TranslationReview = () => {
         };
       });
 
+      // Clear unsaved tracking for this sentence upon successful save
+      setUnsavedSentenceIds((prev) => {
+        const next = new Set(prev);
+        next.delete(translationId);
+        return next;
+      });
+
       setGlobalBanner({
         type: 'success',
         text: 'Translation saved successfully. Sentence is marked for review.',
       });
-      setTimeout(() => setGlobalBanner(null), 3000);
+      setTimeout(() => setGlobalBanner(null), 3500);
     } catch (err) {
       throw err;
     } finally {
@@ -210,22 +252,79 @@ export const TranslationReview = () => {
     }
   };
 
+  // Safe navigation interceptors
+  const handleRequestNavigateRoute = (toPath, stateObj) => {
+    if (hasUnsavedChanges) {
+      setPendingNavigation({ type: 'route', to: toPath, state: stateObj });
+      return;
+    }
+    navigate(toPath, { state: stateObj });
+  };
+
+  const handleRequestChangeLanguage = (targetLangCode) => {
+    if (targetLangCode === activeLangCode) return;
+    if (hasUnsavedChanges) {
+      setPendingNavigation({ type: 'lang', code: targetLangCode });
+      return;
+    }
+    setActiveLangCode(targetLangCode);
+  };
+
+  const handleRequestSentenceNav = (targetIndex) => {
+    if (hasUnsavedChanges) {
+      setPendingNavigation({ type: 'sentence', index: targetIndex });
+      return;
+    }
+    scrollToSentence(targetIndex);
+  };
+
+  // Modal actions: Stay or Leave
+  const handleStayOnPage = () => {
+    setPendingNavigation(null);
+  };
+
+  const handleConfirmLeave = () => {
+    const nav = pendingNavigation;
+    setPendingNavigation(null);
+    setUnsavedSentenceIds(new Set()); // discard unsaved warnings
+
+    if (!nav) return;
+
+    if (nav.type === 'route') {
+      navigate(nav.to, { state: nav.state });
+    } else if (nav.type === 'lang') {
+      setActiveLangCode(nav.code);
+    } else if (nav.type === 'sentence') {
+      scrollToSentence(nav.index);
+    }
+  };
+
   return (
     <MainLayout
       pageTitle="Sentence-by-Sentence Translation Review"
       pageDescription="Refine contextual terminology, rectify translations, and approve final regional educational text."
       actions={
         <div className="header-action-group">
-          <Link
-            to={`/documents/${id}/results`}
-            state={{ document, languages: availableLanguages, activeLanguage: activeLangCode }}
+          <button
+            type="button"
+            onClick={() =>
+              handleRequestNavigateRoute(`/documents/${id}/results`, {
+                document,
+                languages: availableLanguages,
+                activeLanguage: activeLangCode,
+              })
+            }
             className="btn btn-secondary btn-sm"
           >
             &larr; Bilingual Results View
-          </Link>
-          <Link to="/documents" className="btn btn-secondary btn-sm">
+          </button>
+          <button
+            type="button"
+            onClick={() => handleRequestNavigateRoute('/documents')}
+            className="btn btn-secondary btn-sm"
+          >
             All Documents
-          </Link>
+          </button>
         </div>
       }
     >
@@ -302,7 +401,7 @@ export const TranslationReview = () => {
                     role="tab"
                     aria-selected={isActive}
                     className={`lang-tab-btn ${isActive ? 'active' : ''}`}
-                    onClick={() => setActiveLangCode(code)}
+                    onClick={() => handleRequestChangeLanguage(code)}
                   >
                     <span className="tab-native-name">{lang?.nativeName || code.toUpperCase()}</span>
                     <span className="tab-eng-name">{lang?.name}</span>
@@ -411,10 +510,56 @@ export const TranslationReview = () => {
                   onSave={handleSaveSentence}
                   onApprove={handleApproveSentence}
                   onReopen={handleReopenSentence}
+                  onUnsavedChange={handleSentenceUnsavedChange}
+                  onPrevSentence={(idx) => handleRequestSentenceNav(idx - 1)}
+                  onNextSentence={(idx) => handleRequestSentenceNav(idx + 1)}
                   isSaving={savingMap[sentence.id]}
                   isApproving={approvingMap[sentence.id]}
                 />
               ))}
+            </div>
+          )}
+
+          {/* Unsaved Changes Confirmation Modal Dialog */}
+          {pendingNavigation && (
+            <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="unsaved-modal-title">
+              <div className="modal-dialog">
+                <div className="modal-header">
+                  <div className="modal-icon-warn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="22" height="22">
+                      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                      <line x1="12" y1="9" x2="12" y2="13"></line>
+                      <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                    </svg>
+                  </div>
+                  <h3 id="unsaved-modal-title" className="modal-title">Unsaved Changes Warning</h3>
+                </div>
+                <div className="modal-body">
+                  <p>
+                    You have modified one or more translation sentences without saving. If you proceed,
+                    your unsaved edits will be discarded.
+                  </p>
+                  <p className="modal-subtext">
+                    Would you like to stay and save your changes, or leave and discard them?
+                  </p>
+                </div>
+                <div className="modal-actions">
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={handleStayOnPage}
+                  >
+                    Stay on Page
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-danger"
+                    onClick={handleConfirmLeave}
+                  >
+                    Leave & Discard Edits
+                  </button>
+                </div>
+              </div>
             </div>
           )}
         </div>

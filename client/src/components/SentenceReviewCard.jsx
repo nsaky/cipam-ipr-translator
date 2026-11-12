@@ -25,47 +25,74 @@ export const SentenceReviewCard = ({
   onSave,
   onApprove,
   onReopen,
+  onUnsavedChange,
+  onPrevSentence,
+  onNextSentence,
   isSaving,
   isApproving,
 }) => {
   const [currentText, setCurrentText] = useState(sentence.final_text || sentence.machine_text || '');
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [localError, setLocalError] = useState(null);
+  const [localSuccess, setLocalSuccess] = useState(null);
 
   // Sync state when parent sentence record changes (e.g. after save)
   useEffect(() => {
     setCurrentText(sentence.final_text || sentence.machine_text || '');
     setHasUnsavedChanges(false);
     setLocalError(null);
+    if (onUnsavedChange) {
+      onUnsavedChange(sentence.id, false);
+    }
   }, [sentence.final_text, sentence.machine_text, sentence.id]);
 
   const handleTextChange = (e) => {
     const newVal = e.target.value;
     setCurrentText(newVal);
-    setHasUnsavedChanges(newVal !== sentence.final_text);
+    const isDirty = newVal !== sentence.final_text;
+    setHasUnsavedChanges(isDirty);
     if (localError) setLocalError(null);
+    if (localSuccess) setLocalSuccess(null);
+    if (onUnsavedChange) {
+      onUnsavedChange(sentence.id, isDirty);
+    }
   };
 
   const handleSaveClick = async () => {
     const trimmed = currentText.trim();
     if (!trimmed) {
       setLocalError('Translation text cannot be empty.');
+      setLocalSuccess(null);
       return;
     }
 
     try {
       setLocalError(null);
+      setLocalSuccess(null);
       await onSave(sentence.id, trimmed);
       setHasUnsavedChanges(false);
+      setLocalSuccess('Translation saved successfully.');
+      if (onUnsavedChange) {
+        onUnsavedChange(sentence.id, false);
+      }
+      setTimeout(() => {
+        setLocalSuccess(null);
+      }, 3500);
     } catch (err) {
       setLocalError(err.message || 'Failed to save changes.');
+      setLocalSuccess(null);
     }
   };
 
   const handleResetToMachine = () => {
     setCurrentText(sentence.machine_text);
-    setHasUnsavedChanges(sentence.machine_text !== sentence.final_text);
+    const isDirty = sentence.machine_text !== sentence.final_text;
+    setHasUnsavedChanges(isDirty);
     setLocalError(null);
+    setLocalSuccess(null);
+    if (onUnsavedChange) {
+      onUnsavedChange(sentence.id, isDirty);
+    }
   };
 
   const handleApproveClick = async () => {
@@ -106,9 +133,42 @@ export const SentenceReviewCard = ({
           {hasUnsavedChanges && (
             <span className="unsaved-indicator-pill">Unsaved Changes</span>
           )}
+          {localSuccess && (
+            <span className="saved-confirmation-badge" role="status">
+              <svg viewBox="0 0 20 20" fill="currentColor" width="13" height="13">
+                <path
+                  fillRule="evenodd"
+                  d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                  clipRule="evenodd"
+                />
+              </svg>
+              {localSuccess}
+            </span>
+          )}
         </div>
 
         <div className="sentence-status-box">
+          <div className="sentence-nav-buttons">
+            <button
+              type="button"
+              className="btn btn-secondary btn-xs"
+              onClick={() => onPrevSentence && onPrevSentence(index)}
+              disabled={index === 0}
+              title="Previous sentence"
+            >
+              &uarr; Prev
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary btn-xs"
+              onClick={() => onNextSentence && onNextSentence(index)}
+              disabled={index === total - 1}
+              title="Next sentence"
+            >
+              &darr; Next
+            </button>
+          </div>
+
           {isApproved ? (
             <span className="approval-pill approved-pill">
               <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14">
@@ -198,6 +258,18 @@ export const SentenceReviewCard = ({
             <div className="actions-left">
               {hasUnsavedChanges && (
                 <span className="unsaved-note">Press "Save Edits" to persist changes</span>
+              )}
+              {localSuccess && (
+                <span className="saved-note-inline">
+                  <svg viewBox="0 0 20 20" fill="currentColor" width="13" height="13">
+                    <path
+                      fillRule="evenodd"
+                      d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                      clipRule="evenodd"
+                    />
+                  </svg>
+                  {localSuccess}
+                </span>
               )}
             </div>
 
