@@ -105,15 +105,27 @@ export const TranslationResults = () => {
       actions={
         <div className="header-action-group">
           <Link
-            to={`/documents/${id}/review`}
+            to={`/documents/${id}/export?lang=${activeLangCode}`}
             state={{ document, languages: availableLanguages, activeLanguage: activeLangCode }}
             className="btn btn-primary btn-sm"
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+            Export Document
+          </Link>
+          <Link
+            to={`/documents/${id}/review`}
+            state={{ document, languages: availableLanguages, activeLanguage: activeLangCode }}
+            className="btn btn-secondary btn-sm"
           >
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
               <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
             </svg>
-            Review & Edit Translation
+            Review & Edit
           </Link>
           <Link to={`/documents/${id}/languages`} className="btn btn-secondary btn-sm">
             Configure Languages
@@ -284,19 +296,28 @@ export const TranslationResults = () => {
               </div>
             )}
 
-            {/* Action Bar leading to Part 4 Review */}
+            {/* Action Bar leading to Review & Export */}
             <div className="results-footer-notice results-review-cta">
               <div className="cta-text">
-                <strong>Sentence Review & Approval:</strong>
-                <p>Verify terminology, correct errors, and mark sentences as approved for {activeLangMeta?.name}.</p>
+                <strong>Sentence Review & Export:</strong>
+                <p>Verify terminology, correct errors, approve sentences, or generate downloadable DOCX/PDF files for {activeLangMeta?.name}.</p>
               </div>
-              <Link
-                to={`/documents/${id}/review`}
-                state={{ document, languages: availableLanguages, activeLanguage: activeLangCode }}
-                className="btn btn-primary btn-sm"
-              >
-                Open Review Interface &rarr;
-              </Link>
+              <div className="cta-button-group">
+                <Link
+                  to={`/documents/${id}/export?lang=${activeLangCode}`}
+                  state={{ document, languages: availableLanguages, activeLanguage: activeLangCode }}
+                  className="btn btn-secondary btn-sm"
+                >
+                  Export Options
+                </Link>
+                <Link
+                  to={`/documents/${id}/review`}
+                  state={{ document, languages: availableLanguages, activeLanguage: activeLangCode }}
+                  className="btn btn-primary btn-sm"
+                >
+                  Open Review Interface &rarr;
+                </Link>
+              </div>
             </div>
           </div>
         </div>

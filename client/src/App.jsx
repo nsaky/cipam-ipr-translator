@@ -12,6 +12,7 @@ import LanguageSelection from './pages/LanguageSelection';
 import TranslationWorkflow from './pages/TranslationWorkflow';
 import TranslationResults from './pages/TranslationResults';
 import TranslationReview from './pages/TranslationReview';
+import ExportDocument from './pages/ExportDocument';
 
 function App() {
   return (
@@ -96,6 +97,15 @@ function App() {
             element={
               <ProtectedRoute>
                 <TranslationReview />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/documents/:id/export"
+            element={
+              <ProtectedRoute>
+                <ExportDocument />
               </ProtectedRoute>
             }
           />
