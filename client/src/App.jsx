@@ -13,6 +13,7 @@ import TranslationWorkflow from './pages/TranslationWorkflow';
 import TranslationResults from './pages/TranslationResults';
 import TranslationReview from './pages/TranslationReview';
 import ExportDocument from './pages/ExportDocument';
+import Glossary from './pages/Glossary';
 
 function App() {
   return (
@@ -115,6 +116,15 @@ function App() {
             element={
               <ProtectedRoute>
                 <UploadDocument />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/glossary"
+            element={
+              <ProtectedRoute>
+                <Glossary />
               </ProtectedRoute>
             }
           />
