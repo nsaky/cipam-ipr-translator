@@ -1,4 +1,4 @@
-// test.js — end-to-end check of the translation module: PDF -> sentences -> Hindi -> PDF.
+// test.js — end-to-end check of the translation module: PDF -> sentences -> all target languages -> PDFs.
 // Usage: node test.js [input.pdf] [sentenceCount]
 //   node test.js                       (uses samples/sample.pdf, first 3 sentences)
 //   node test.js samples/scanned.pdf   (scanned PDF, goes through the OCR fallback)
@@ -16,8 +16,18 @@ try {
 
 const input = process.argv[2] || path.join(__dirname, 'samples', 'sample.pdf');
 const count = Number(process.argv[3]) || 3;
-const output = path.join(__dirname, 'output-hi.pdf');
 
+// Day 3 target languages: Hindi, Marathi, Bengali, Gujarati, Tamil, Telugu
+const LANGUAGES = [
+  { code: 'hi', name: 'Hindi' },
+  { code: 'mr', name: 'Marathi' },
+  { code: 'bn', name: 'Bengali' },
+  { code: 'gu', name: 'Gujarati' },
+  { code: 'ta', name: 'Tamil' },
+  { code: 'te', name: 'Telugu' },
+];
+
+// Hindi glossary (IPR terms enforced strictly for the Hindi output).
 const glossary = {
   patent: 'पेटेंट',
   trademark: 'व्यापार चिह्न',
@@ -36,17 +46,25 @@ async function main() {
   if (sentences.length === 0) throw new Error('No text found in the PDF.');
 
   const sample = sentences.slice(0, count);
-  console.time('translate');
-  const translated = await translate(sample, 'hi', glossary);
-  console.timeEnd('translate');
+  console.log(`\nTranslating first ${sample.length} sentence(s) into ${LANGUAGES.length} languages:\n`);
 
-  sample.forEach((en, i) => console.log(`\nEN: ${en}\nHI: ${translated[i]}`));
+  for (const { code, name } of LANGUAGES) {
+    console.time(`translate-${code}`);
+    // Glossary is Hindi-only; skip for other languages to avoid false violations.
+    const langGlossary = code === 'hi' ? glossary : {};
+    const translated = await translate(sample, code, langGlossary);
+    console.timeEnd(`translate-${code}`);
 
-  console.time('exportPdf');
-  const pdf = await exportPdf(translated, 'hi');
-  console.timeEnd('exportPdf');
-  fs.writeFileSync(output, pdf);
-  console.log(`\nSaved ${pdf.length} bytes to ${output}`);
+    console.log(`\n===== ${name} (${code}) =====`);
+    sample.forEach((en, i) => console.log(`EN: ${en}\n${name}: ${translated[i]}\n`));
+
+    console.time(`exportPdf-${code}`);
+    const pdf = await exportPdf(translated, code);
+    console.timeEnd(`exportPdf-${code}`);
+    const output = path.join(__dirname, `output-${code}.pdf`);
+    fs.writeFileSync(output, pdf);
+    console.log(`Saved ${pdf.length} bytes to ${output}`);
+  }
 }
 
 main().catch((err) => {
