@@ -33,6 +33,7 @@ router.get('/', getGlossaryTerms);
 router.post('/', requireAdmin, createGlossaryTerm);
 router.put('/:id', requireAdmin, updateGlossaryTerm);
 router.patch('/:id', requireAdmin, updateGlossaryTerm);
+router.delete('/', requireAdmin, deleteGlossaryTerm);
 router.delete('/:id', requireAdmin, deleteGlossaryTerm);
 
 module.exports = router;

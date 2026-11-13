@@ -89,8 +89,11 @@ async function uploadDocument(req, res, next) {
         title: document.title,
         source_type: document.source_type,
         created_at: document.created_at,
+        segment_count: sentences.length,
+        sentence_count: sentences.length,
       },
       segment_count: sentences.length,
+      sentence_count: sentences.length,
     });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -144,8 +147,13 @@ async function getDocuments(req, res, next) {
 
     const result = await pool.query(query, params);
 
+    const normalizedDocs = result.rows.map(d => ({
+      ...d,
+      sentence_count: d.segment_count,
+    }));
+
     return res.status(200).json({
-      documents: result.rows,
+      documents: normalizedDocs,
     });
   } catch (err) {
     next(err);
@@ -193,13 +201,25 @@ async function getDocumentById(req, res, next) {
       [documentId]
     );
 
+    const normalizedSegments = segmentsResult.rows.map(s => ({
+      id: s.id,
+      position: s.position,
+      sentence_number: s.position,
+      source_text: s.source_text,
+      original_text: s.source_text,
+    }));
+
     return res.status(200).json({
       document: {
         id: document.id,
+        user_id: document.user_id,
         title: document.title,
         source_type: document.source_type,
         created_at: document.created_at,
-        segments: segmentsResult.rows,
+        segment_count: normalizedSegments.length,
+        sentence_count: normalizedSegments.length,
+        segments: normalizedSegments,
+        sentences: normalizedSegments,
       },
     });
   } catch (err) {
@@ -370,9 +390,17 @@ async function translateDocument(req, res, next) {
         );
 
         storedTranslations.push({
-          ...insertRes.rows[0],
+          id: insertRes.rows[0].id,
+          translation_id: insertRes.rows[0].id,
+          segment_id: segment.id,
           position: segment.position,
+          sentence_number: segment.position,
           source_text: segment.source_text,
+          original_text: segment.source_text,
+          lang: insertRes.rows[0].lang,
+          machine_text: insertRes.rows[0].machine_text,
+          final_text: insertRes.rows[0].final_text,
+          approved: insertRes.rows[0].approved,
         });
       }
 
@@ -388,7 +416,9 @@ async function translateDocument(req, res, next) {
       message: 'Translation completed successfully.',
       document_id: documentId,
       lang: normalizedLang,
+      sentence_count: storedTranslations.length,
       translation_count: storedTranslations.length,
+      sentences: storedTranslations,
       translations: storedTranslations,
     });
   } catch (err) {
@@ -442,8 +472,18 @@ async function getDocumentTranslations(req, res, next) {
 
     if (normalizedLang) {
       query = `
-        SELECT s.id AS segment_id, s.position, s.source_text,
-               t.id AS translation_id, t.lang, t.machine_text, t.final_text, t.approved
+        SELECT
+          t.id,
+          t.id AS translation_id,
+          s.id AS segment_id,
+          s.position,
+          s.position AS sentence_number,
+          s.source_text,
+          s.source_text AS original_text,
+          t.lang,
+          t.machine_text,
+          t.final_text,
+          COALESCE(t.approved, false) AS approved
         FROM segments s
         LEFT JOIN translations t ON t.segment_id = s.id AND t.lang = $2
         WHERE s.document_id = $1
@@ -452,8 +492,18 @@ async function getDocumentTranslations(req, res, next) {
       params = [documentId, normalizedLang];
     } else {
       query = `
-        SELECT s.id AS segment_id, s.position, s.source_text,
-               t.id AS translation_id, t.lang, t.machine_text, t.final_text, t.approved
+        SELECT
+          t.id,
+          t.id AS translation_id,
+          s.id AS segment_id,
+          s.position,
+          s.position AS sentence_number,
+          s.source_text,
+          s.source_text AS original_text,
+          t.lang,
+          t.machine_text,
+          t.final_text,
+          COALESCE(t.approved, false) AS approved
         FROM segments s
         LEFT JOIN translations t ON t.segment_id = s.id
         WHERE s.document_id = $1
@@ -467,6 +517,8 @@ async function getDocumentTranslations(req, res, next) {
     return res.status(200).json({
       document_id: documentId,
       lang: normalizedLang || 'all',
+      sentence_count: result.rows.length,
+      sentences: result.rows,
       translations: result.rows,
     });
   } catch (err) {

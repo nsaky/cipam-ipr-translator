@@ -45,10 +45,10 @@ async function register(req, res, next) {
     // Hash the password with bcrypt (10 rounds)
     const passwordHash = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
 
-    // Insert user into PostgreSQL
+    // Insert user into PostgreSQL with enforced default role 'reviewer'
     const insertResult = await pool.query(
       `INSERT INTO users (name, email, password_hash, role)
-       VALUES ($1, $2, $3, 'user')
+       VALUES ($1, $2, $3, 'reviewer')
        RETURNING id, name, email, role, created_at`,
       [name, email, passwordHash]
     );

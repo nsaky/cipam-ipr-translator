@@ -7,7 +7,9 @@
 //    directory traversal, overwrites, and execution of dangerous extensions.
 // 2. Strict allow-list of extensions (.docx, .pdf, .png, .jpg, .jpeg) and MIME types.
 // 3. 10 MB maximum file size limit.
-// 4. Custom error wrapper to return user-friendly HTTP error codes.
+// 4. Supports both 'document' (frontend standard) and 'file' (legacy API standard) fields.
+// 5. Enforces strictly 1 uploaded file per request.
+// 6. Custom error wrapper to return user-friendly HTTP error codes.
 
 'use strict';
 
@@ -85,18 +87,22 @@ const upload = multer({
   storage,
   limits: {
     fileSize: MAX_FILE_SIZE,
-    files: 1, // Only one document per upload request
+    files: 2, // Allow checking if client sends multiple files
   },
   fileFilter,
 });
+
+// Support both 'document' (Person C frontend) and 'file' (Person A original API)
+const uploadFields = upload.fields([
+  { name: 'document', maxCount: 1 },
+  { name: 'file', maxCount: 1 },
+]);
 
 /**
  * Express middleware wrapper to intercept Multer errors and return clean JSON.
  */
 function handleDocumentUpload(req, res, next) {
-  const uploadSingle = upload.single('file');
-
-  uploadSingle(req, res, (err) => {
+  uploadFields(req, res, (err) => {
     if (err instanceof multer.MulterError) {
       if (err.code === 'LIMIT_FILE_SIZE') {
         return res.status(413).json({
@@ -112,6 +118,31 @@ function handleDocumentUpload(req, res, next) {
       });
     }
 
+    const docFile = req.files && req.files.document && req.files.document[0];
+    const fileFile = req.files && req.files.file && req.files.file[0];
+
+    // Reject if multiple files were uploaded across both fields
+    if (docFile && fileFile) {
+      try {
+        if (fs.existsSync(docFile.path)) fs.unlinkSync(docFile.path);
+        if (fs.existsSync(fileFile.path)) fs.unlinkSync(fileFile.path);
+      } catch (unlinkErr) {
+        console.error('Failed to unlink dual upload files:', unlinkErr.message);
+      }
+      return res.status(400).json({
+        error: 'Only one file may be uploaded per request. Please provide either "document" or "file", not both.',
+      });
+    }
+
+    const uploaded = docFile || fileFile;
+    if (!uploaded) {
+      return res.status(400).json({
+        error: 'No file uploaded. Please attach a .docx, .pdf, or image file using field "document" or "file".',
+      });
+    }
+
+    // Attach to req.file so existing controllers work seamlessly
+    req.file = uploaded;
     next();
   });
 }

@@ -31,14 +31,14 @@ CREATE TABLE IF NOT EXISTS users (
   name          VARCHAR(100)  NOT NULL,
   email         VARCHAR(255)  NOT NULL,
   password_hash TEXT          NOT NULL,
-  role          VARCHAR(10)   NOT NULL DEFAULT 'user',
+  role          VARCHAR(10)   NOT NULL DEFAULT 'reviewer',
   created_at    TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
 
   -- Unique constraint: no two users may have the same email
   CONSTRAINT users_email_unique UNIQUE (email),
 
-  -- Check constraint: role must be exactly 'admin' or 'user'
-  CONSTRAINT users_role_check   CHECK  (role IN ('admin', 'user'))
+  -- Check constraint: role must be exactly 'admin', 'reviewer', or 'user'
+  CONSTRAINT users_role_check   CHECK  (role IN ('admin', 'reviewer', 'user'))
 );
 
 -- ────────────────────────────────────────────────────────────
