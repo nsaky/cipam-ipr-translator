@@ -6,9 +6,9 @@
 
 const fs = require('fs');
 const path = require('path');
-const { extractText } = require('./services/extract');
-const { translate } = require('./services/translate');
-const { exportPdf } = require('./services/export');
+const { extractText } = require('./server/services/extract');
+const { translate } = require('./server/services/translate');
+const { exportPdf } = require('./server/services/export');
 
 try {
   process.loadEnvFile(); // Node 21.7+: reads .env if it exists

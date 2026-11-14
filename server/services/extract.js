@@ -1,48 +1,74 @@
 // server/services/extract.js
-//
-// PERSON B INTEGRATION CONTRACT: Text Extraction Service
-//
-// Purpose:
-// Extracts English text from an uploaded file and returns an array of
-// distinct sentences/segments in order.
-//
-// Technology responsibility (Person B):
-// - mammoth for .docx files
-// - pdf-parse for text PDF files
-// - tesseract.js for image files (.png, .jpg)
-//
-// Fixed contract:
-// @param {string} filePath - Absolute path to the file on disk
-// @param {string} type - 'docx' | 'pdf' | 'image'
-// @returns {Promise<string[]>} - Ordered array of extracted English sentences
+// Extracts text from uploaded documents and splits it into sentences.
 
-'use strict';
+const fs = require('fs/promises');
+const mammoth = require('mammoth');
+const { PDFParse } = require('pdf-parse');
+const Tesseract = require('tesseract.js');
+const { splitSentences } = require('./translate');
 
-const fs = require('fs');
-
-/**
- * Extracts English sentences from a document or image.
- * This function adheres to the agreed Day 1 interface so Person A can
- * process uploads and store segments before Person B finalizes OCR and parsers.
- */
-async function extractText(filePath, type) {
-  // Verify file existence on disk
-  if (!filePath || !fs.existsSync(filePath)) {
-    throw new Error(`File not found at path: ${filePath}`);
-  }
-
-  // Realistic fallback sentences representing standard CIPAM IPR domain content.
-  // When Person B installs mammoth, pdf-parse, and tesseract.js, they will replace
-  // this return with the actual parsed sentences.
-  return [
-    'An intellectual property right is an exclusive legal right granted to an inventor or creator.',
-    'A patent protects new and useful inventions, preventing unauthorized commercial use.',
-    'A trademark distinguishes the goods and services of one enterprise from those of others.',
-    'Copyright protects original literary, artistic, and scientific creations.',
-    'Geographical indications identify products having a specific geographical origin and reputation.',
-  ];
+// PDF/OCR text has hard line wraps; re-join words hyphenated across lines ("trade-\nmark" -> "trademark").
+function cleanText(text) {
+  return text.replace(/(\w)-\n(\w)/g, '$1$2');
 }
 
-module.exports = {
-  extractText,
-};
+// Below this many non-space characters, a PDF is treated as scanned and sent to OCR.
+const MIN_PDF_TEXT_CHARS = 20;
+
+// OCR several images with one Tesseract worker (much faster than one worker per page).
+async function ocrImages(images) {
+  const worker = await Tesseract.createWorker('eng');
+  try {
+    const texts = [];
+    for (const img of images) texts.push((await worker.recognize(img)).data.text);
+    return texts.join('\n\n'); // blank line between pages = paragraph break for splitSentences
+  } finally {
+    await worker.terminate();
+  }
+}
+
+/**
+ * Extract text from a file and return it as an array of sentences.
+ * @param {string} filePath  Path to the file on disk
+ * @param {string} type      'docx', 'pdf', or 'image' (also accepts 'png', 'jpg', 'jpeg')
+ * @returns {Promise<string[]>}
+ */
+async function extractText(filePath, type) {
+  switch (String(type).toLowerCase().replace(/^\./, '')) {
+    case 'docx': {
+      // extractRawText puts a blank line between paragraphs, which splitSentences treats as a paragraph break.
+      const { value } = await mammoth.extractRawText({ path: filePath });
+      return splitSentences(value);
+    }
+
+    case 'pdf': {
+      const parser = new PDFParse({ data: await fs.readFile(filePath) });
+      try {
+        // pageJoiner: '' stops pdf-parse from inserting "-- 1 of 3 --" markers into the text.
+        let { text } = await parser.getText({ pageJoiner: '' });
+
+        // Scanned (image-only) PDF: no text layer, so render each page to PNG and OCR it.
+        if (text.replace(/\s/g, '').length < MIN_PDF_TEXT_CHARS) {
+          const { pages } = await parser.getScreenshot({ scale: 3, imageDataUrl: false });
+          text = await ocrImages(pages.map((p) => p.data));
+        }
+        return splitSentences(cleanText(text));
+      } finally {
+        await parser.destroy();
+      }
+    }
+
+    case 'image':
+    case 'png':
+    case 'jpg':
+    case 'jpeg': {
+      // Runs locally. The English model (~10 MB) downloads once on first use, then is cached.
+      return splitSentences(cleanText(await ocrImages([filePath])));
+    }
+
+    default:
+      throw new Error(`Unsupported file type: ${type}`);
+  }
+}
+
+module.exports = { extractText };
