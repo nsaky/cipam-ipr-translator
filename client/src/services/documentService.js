@@ -117,6 +117,27 @@ const saveStoredDocuments = (docs) => {
 
 const simulateDelay = (ms = 350) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const MIME_BY_SOURCE_TYPE = {
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  pdf: 'application/pdf',
+  image: 'image/png, image/jpeg',
+};
+
+/**
+ * Map a document from the real backend (title, source_type, created_at, ...) to the
+ * field names the pages use (name, fileType, uploadDate, ...). Backend fields are kept.
+ * File size isn't stored by the backend, so it stays empty and shows as "—".
+ */
+const fromApi = (d) =>
+  d && {
+    ...d,
+    name: d.name ?? d.title,
+    fileType: d.fileType ?? d.source_type,
+    uploadDate: d.uploadDate ?? d.created_at,
+    mimeType: d.mimeType ?? MIME_BY_SOURCE_TYPE[d.source_type],
+    sentenceCount: d.sentenceCount ?? d.sentence_count ?? d.segment_count,
+  };
+
 export const documentService = {
   /**
    * Fetch all documents
@@ -132,7 +153,8 @@ export const documentService = {
 
     const response = await api.get('/documents');
     // Normalize backend response if wrapped in { data: [...] } or { documents: [...] }
-    return response.data?.documents || response.data?.data || response.data;
+    const docs = response.data?.documents || response.data?.data || response.data;
+    return Array.isArray(docs) ? docs.map(fromApi) : docs;
   },
 
   /**
@@ -152,7 +174,7 @@ export const documentService = {
     }
 
     const response = await api.get(`/documents/${id}`);
-    return response.data?.document || response.data?.data || response.data;
+    return fromApi(response.data?.document || response.data?.data || response.data);
   },
 
   /**
@@ -200,7 +222,7 @@ export const documentService = {
     }
 
     const response = await api.post('/documents', formData);
-    return response.data?.document || response.data?.data || response.data;
+    return fromApi(response.data?.document || response.data?.data || response.data);
   },
 
   /**
@@ -234,7 +256,8 @@ export const documentService = {
    * Helper to format bytes to human readable string (KB / MB)
    */
   formatFileSize(bytes) {
-    if (!bytes || isNaN(bytes)) return '0 B';
+    if (bytes === undefined || bytes === null || isNaN(bytes)) return '—'; // unknown (real backend doesn't store size)
+    if (!bytes) return '0 B';
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;

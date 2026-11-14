@@ -8,12 +8,11 @@ import axios from 'axios';
  * - withCredentials: true so that HTTP-only JWT cookies set by Person A's backend
  *   are automatically sent and accepted on cross-origin / same-origin requests.
  */
+// No default Content-Type: axios sets application/json for plain objects by itself.
+// Forcing it here made axios convert FormData uploads to JSON and drop the file.
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || 'http://localhost:5000',
   withCredentials: true,
-  headers: {
-    'Content-Type': 'application/json',
-  },
 });
 
 // Response interceptor for centralized error response handling
