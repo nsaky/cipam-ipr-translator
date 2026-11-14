@@ -1,0 +1,18 @@
+# Keep secrets, dependencies and local files out of the Docker build
+.git
+.env
+*.env
+.env.*
+!.env.example
+node_modules
+client/node_modules
+client/dist
+client/.env
+server/uploads
+samples
+output-*.pdf
+*.traineddata
+.DS_Store
+.vscode
+.idea
+.claude
