@@ -8,9 +8,12 @@
 // 3. Enforces server-side Origin/Referer CSRF validation
 // 4. Mounts API routes with dual-prefix support (/api/* and /*)
 // 5. Provides centralized error handling
+// 6. In production, serves the built React app (client/dist) from the same domain
 
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
@@ -27,8 +30,45 @@ const app = express();
 // Disable X-Powered-By header to prevent technology fingerprinting
 app.disable('x-powered-by');
 
+// Behind a hosting proxy (Render), trust its X-Forwarded-* headers so req.ip is the
+// real client IP. Without this the login rate limiter treats all users as one IP.
+if (process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', 1);
+}
+
 // Helmet sets secure HTTP response headers
 app.use(helmet());
+
+// ─────────────────────────────────────────────────────────────
+// FRONTEND (production only)
+// Serving the React build from this server keeps the app on ONE domain, so the
+// sameSite=strict login cookie works. Registered before CORS so the app's own
+// assets are never subject to origin checks.
+// ─────────────────────────────────────────────────────────────
+const CLIENT_DIST = path.resolve(__dirname, '../client/dist');
+if (process.env.NODE_ENV === 'production' && fs.existsSync(path.join(CLIENT_DIST, 'index.html'))) {
+  app.use(
+    express.static(CLIENT_DIST, {
+      index: false,
+      setHeaders: (res, filePath) => {
+        // Vite puts content-hashed files in /assets, so they can be cached forever
+        if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        }
+      },
+    })
+  );
+
+  // Page loads (browser asks for HTML) get the React app, even for paths like
+  // /documents or /glossary that also exist as API routes. API calls ask for JSON.
+  app.use((req, res, next) => {
+    if (req.method === 'GET' && !req.path.startsWith('/api/') && req.accepts(['json', 'html']) === 'html') {
+      res.setHeader('Cache-Control', 'no-cache');
+      return res.sendFile(path.join(CLIENT_DIST, 'index.html'));
+    }
+    next();
+  });
+}
 
 // CORS configuration supporting frontend dev origins (5173, 3000) and FRONTEND_URL
 app.use(

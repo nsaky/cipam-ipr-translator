@@ -33,6 +33,11 @@ const DEFAULT_ALLOWED_ORIGINS = [
  */
 function getAllowedOrigins() {
   const defaults = [...DEFAULT_ALLOWED_ORIGINS];
+  // Render sets RENDER_EXTERNAL_URL to the service's public URL; the app serves its own
+  // frontend there, so that origin is always trusted.
+  if (process.env.RENDER_EXTERNAL_URL) {
+    defaults.unshift(process.env.RENDER_EXTERNAL_URL.trim().replace(/\/+$/, ''));
+  }
   const envUrl = process.env.FRONTEND_URL;
   if (!envUrl) return defaults;
 

@@ -60,7 +60,18 @@ function escapeHtml(s) {
  * @param {string} lang  Language code: 'hi', 'mr', 'bn', 'gu', 'ta', 'te'
  * @returns {Promise<Buffer>}
  */
-async function exportPdf(rows, lang) {
+// Only one Chromium at a time: each instance needs ~200 MB, and small hosts
+// (e.g. Render free, 512 MB) would run out of memory with two in parallel.
+// Extra exports wait in line instead of crashing the server.
+let pdfQueue = Promise.resolve();
+
+function exportPdf(rows, lang) {
+  const job = pdfQueue.then(() => renderPdf(rows, lang));
+  pdfQueue = job.catch(() => {}); // a failed export must not block the next one
+  return job;
+}
+
+async function renderPdf(rows, lang) {
   const code = String(lang).toLowerCase();
   const primary = NOTO_FONTS[code] || 'Noto Sans Devanagari';
 
@@ -93,7 +104,13 @@ ${body}
 </body>
 </html>`;
 
-  const browser = await puppeteer.launch();
+  // In Docker (CHROMIUM_NO_SANDBOX=true, set in the Dockerfile) Chromium can't use its
+  // sandbox and /dev/shm is tiny. The page only contains our own escaped text.
+  // PUPPETEER_EXECUTABLE_PATH (also set there) points puppeteer at the system Chromium.
+  const args = process.env.CHROMIUM_NO_SANDBOX === 'true'
+    ? ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+    : [];
+  const browser = await puppeteer.launch({ args });
   try {
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30000 });
