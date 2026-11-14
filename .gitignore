@@ -1,6 +1,7 @@
 # Environment variables — contains secrets, NEVER commit this file
 .env
 *.env
+*.env.local
 
 # Node.js dependencies — installed locally, never committed
 node_modules/
@@ -12,6 +13,7 @@ server/uploads/
 output-*.pdf
 *.traineddata
 samples/
+dist/
 skills-lock.json
 *.claude
 
