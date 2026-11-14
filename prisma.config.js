@@ -9,6 +9,8 @@ module.exports = defineConfig({
     path: 'prisma/migrations',
   },
   datasource: {
-    url: process.env.DATABASE_URL,
+    // Migrations need a direct (non-pooled) connection. On Neon, set DIRECT_URL to the
+    // connection string WITHOUT "-pooler"; locally DATABASE_URL is used for both.
+    url: process.env.DIRECT_URL || process.env.DATABASE_URL,
   },
 });
