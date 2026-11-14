@@ -6,7 +6,7 @@ This document describes the PostgreSQL database architecture, schema definitions
 
 ## 1. Database Overview
 
-The system uses **PostgreSQL 16** accessed via the Node.js `pg` driver using a single connection pool configured in [`server/config/db.js`](file:///Users/mekavikas/Documents/cipam-ipr-translator/server/config/db.js).
+The system uses **PostgreSQL** accessed through **Prisma ORM** (v7, with the `@prisma/adapter-pg` driver adapter). A single shared Prisma Client is created in [`server/config/db.js`](../config/db.js); the schema is in [`prisma/schema.prisma`](../../prisma/schema.prisma).
 
 All database definitions are structured into five core tables:
 1. `users` — Authentication accounts and RBAC roles.
@@ -102,22 +102,38 @@ erDiagram
 
 ## 5. Execution and Setup Instructions
 
-### 5.1 Executing the Schema
-Run the schema file using `psql`:
-```bash
-psql -U mekavikas -d cipam_ipr_db -f server/database/schema.sql
-```
-This executes all table creations and index creations inside a single atomic `BEGIN ... COMMIT` transaction.
+The database is managed with **Prisma ORM** (v7). The schema is defined in
+[`prisma/schema.prisma`](../../prisma/schema.prisma) and created by the SQL migrations in
+`prisma/migrations/`. `DATABASE_URL` in `.env` must point at your database
+(see `prisma.config.js`).
 
-### 5.2 Seeding the Glossary
-Run the seed data file:
+### 5.1 New database (local or hosted, e.g. Neon)
 ```bash
-psql -U mekavikas -d cipam_ipr_db -f server/database/seed.sql
+npm install            # also runs `prisma generate`
+npm run db:setup       # = prisma migrate deploy (creates tables) + glossary seed
 ```
-Uses `ON CONFLICT (lang, en_term) DO NOTHING` so it can be re-run safely at any time without duplicating records.
+`db:setup` is safe to re-run: applied migrations are skipped, and the glossary seed uses
+`ON CONFLICT (lang, en_term) DO NOTHING`.
 
-### 5.3 Configuring and Seeding the Administrator Account
-The administrator account is seeded using a secure Node.js script to ensure password hashing through `bcrypt` with 10 salt rounds:
+### 5.2 Existing database created earlier with `schema.sql`
+Your tables already exist, so tell Prisma the first migration is already applied (run once):
+```bash
+npx prisma migrate resolve --applied 0_init
+npx prisma migrate status   # should say "Database schema is up to date!"
+```
+`schema.sql` and `migrations/001_add_reviewer_role.sql` are kept for reference only;
+new databases should use `npm run db:setup`.
+
+### 5.3 Changing the schema
+1. Edit `prisma/schema.prisma`.
+2. Run `npx prisma migrate dev --name describe_your_change` (creates a migration and regenerates the client).
+3. Commit the new folder in `prisma/migrations/`.
+
+CHECK constraints (allowed roles, languages and source types) can't be written in
+`schema.prisma`; they are added by hand at the end of `prisma/migrations/0_init/migration.sql`.
+
+### 5.4 Configuring and Seeding the Administrator Account
+The administrator account is seeded using a Node.js script so the password is hashed with `bcrypt` (10 salt rounds):
 
 1. Configure credentials in `.env`:
    ```env
@@ -127,9 +143,9 @@ The administrator account is seeded using a secure Node.js script to ensure pass
    ```
 2. Execute the seed script:
    ```bash
-   node server/database/seed-admin.js
+   npm run db:seed-admin
    ```
-3. Safe idempotency: The script uses `ON CONFLICT (email) DO NOTHING`. If the email already exists, no duplicate is created and existing credentials remain untouched.
+3. Safe to re-run: if the email already exists, nothing is changed.
 4. Security best practice: After seeding, remove or comment out `ADMIN_PASSWORD` from `.env`.
 
 ---

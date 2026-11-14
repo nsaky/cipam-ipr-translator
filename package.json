@@ -6,13 +6,20 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
-    "test": "node test.js"
+    "test": "node test.js",
+    "postinstall": "prisma generate",
+    "db:migrate": "prisma migrate deploy",
+    "db:seed": "prisma db execute --file server/database/seed.sql",
+    "db:setup": "npm run db:migrate && npm run db:seed",
+    "db:seed-admin": "node server/database/seed-admin.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@prisma/adapter-pg": "7.10.1",
+    "@prisma/client": "7.10.1",
     "bcrypt": "^6.0.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
@@ -29,5 +36,8 @@
     "puppeteer": "^25.17.0",
     "tesseract.js": "^7.0.0",
     "uuid": "^14.0.3"
+  },
+  "devDependencies": {
+    "prisma": "7.10.1"
   }
 }

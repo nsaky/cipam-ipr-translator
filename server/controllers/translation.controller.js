@@ -9,11 +9,35 @@
 // - Verify document ownership through segment and document relationships
 // - Preserve the original English sentence unmodified in the segments table
 // - Ensure editing one translation leaves all other segments and languages intact
-// - Enforce parameterized SQL queries and input validation
+// - Enforce input validation (Prisma parameterizes all queries)
 
 'use strict';
 
-const pool = require('../config/db');
+const prisma = require('../config/db');
+
+/**
+ * Load a translation with its segment and the owning document's user_id,
+ * flattened into one object (null if not found).
+ */
+async function findTranslationWithOwner(translationId) {
+  const t = await prisma.translation.findUnique({
+    where: { id: translationId },
+    include: {
+      segment: {
+        select: { position: true, source_text: true, document: { select: { id: true, user_id: true } } },
+      },
+    },
+  });
+  if (!t) return null;
+  const { segment, ...rest } = t;
+  return {
+    ...rest,
+    position: segment.position,
+    source_text: segment.source_text,
+    document_id: segment.document.id,
+    user_id: segment.document.user_id,
+  };
+}
 
 /**
  * Update an individual translation segment (edit text or toggle approval).
@@ -55,18 +79,7 @@ async function updateTranslation(req, res, next) {
 
   try {
     // 1. Fetch translation with segment and document ownership details
-    const lookupQuery = `
-      SELECT t.id, t.segment_id, t.lang, t.machine_text, t.final_text, t.approved,
-             s.position, s.source_text,
-             d.id AS document_id, d.user_id
-      FROM translations t
-      JOIN segments s ON s.id = t.segment_id
-      JOIN documents d ON d.id = s.document_id
-      WHERE t.id = $1
-    `;
-    const lookupResult = await pool.query(lookupQuery, [translationId]);
-
-    const existing = lookupResult.rows[0];
+    const existing = await findTranslationWithOwner(translationId);
     if (!existing) {
       return res.status(404).json({
         error: 'Translation record not found.',
@@ -80,32 +93,15 @@ async function updateTranslation(req, res, next) {
       });
     }
 
-    // 3. Construct dynamic parameterized update query
-    const setClauses = [];
-    const params = [];
-    let paramIndex = 1;
+    // 3. Update only the fields that were provided
+    const data = {};
+    if (final_text !== undefined) data.final_text = final_text.trim();
+    if (approved !== undefined) data.approved = approved;
 
-    if (final_text !== undefined) {
-      setClauses.push(`final_text = $${paramIndex++}`);
-      params.push(final_text.trim());
-    }
-
-    if (approved !== undefined) {
-      setClauses.push(`approved = $${paramIndex++}`);
-      params.push(approved);
-    }
-
-    params.push(translationId);
-
-    const updateQuery = `
-      UPDATE translations
-      SET ${setClauses.join(', ')}
-      WHERE id = $${paramIndex}
-      RETURNING id, segment_id, lang, machine_text, final_text, approved
-    `;
-
-    const updateResult = await pool.query(updateQuery, params);
-    const updated = updateResult.rows[0];
+    const updated = await prisma.translation.update({
+      where: { id: translationId },
+      data,
+    });
 
     return res.status(200).json({
       message: 'Translation updated successfully.',
@@ -136,17 +132,7 @@ async function getTranslationById(req, res, next) {
   }
 
   try {
-    const query = `
-      SELECT t.id, t.segment_id, t.lang, t.machine_text, t.final_text, t.approved,
-             s.position, s.source_text,
-             d.id AS document_id, d.user_id
-      FROM translations t
-      JOIN segments s ON s.id = t.segment_id
-      JOIN documents d ON d.id = s.document_id
-      WHERE t.id = $1
-    `;
-    const result = await pool.query(query, [translationId]);
-    const translation = result.rows[0];
+    const translation = await findTranslationWithOwner(translationId);
 
     if (!translation) {
       return res.status(404).json({ error: 'Translation record not found.' });

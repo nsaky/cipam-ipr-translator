@@ -31,8 +31,8 @@
 require('dotenv').config({ path: require('path').resolve(__dirname, '../../.env') });
 
 const bcrypt = require('bcrypt');
-// Reuse the existing pool — do not create a new connection
-const pool   = require('../config/db');
+// Reuse the shared Prisma Client
+const prisma = require('../config/db');
 
 async function seedAdmin() {
   // ── 1. Read credentials from environment variables ─────────
@@ -61,16 +61,15 @@ async function seedAdmin() {
   const passwordHash = await bcrypt.hash(adminPassword, 10);
 
   // ── 4. Insert the admin user (skip if email already exists) ─
-  const result = await pool.query(
-    `INSERT INTO users (name, email, password_hash, role)
-     VALUES ($1, $2, $3, 'admin')
-     ON CONFLICT (email) DO NOTHING
-     RETURNING id, name, email, role, created_at`,
-    [adminName, adminEmail, passwordHash]
-  );
+  const existing = await prisma.user.findUnique({ where: { email: adminEmail }, select: { id: true } });
+  const admin = existing
+    ? null
+    : await prisma.user.create({
+        data: { name: adminName, email: adminEmail, password_hash: passwordHash, role: 'admin' },
+        select: { id: true, name: true, email: true, role: true, created_at: true },
+      });
 
-  if (result.rows.length > 0) {
-    const admin = result.rows[0];
+  if (admin) {
     console.log('✅  Admin account created successfully.');
     console.log('    ID:    ', admin.id);
     console.log('    Name:  ', admin.name);
@@ -84,8 +83,8 @@ async function seedAdmin() {
     console.log('    No changes made.');
   }
 
-  // ── 5. Close the pool so the script exits cleanly ───────────
-  await pool.end();
+  // ── 5. Close the connection so the script exits cleanly ─────
+  await prisma.$disconnect();
 }
 
 // Run the function and handle any unexpected errors
