@@ -200,10 +200,73 @@ const ABBREVIATIONS = [
 ];
 const ABBR_RE = new RegExp(`(?:^|[\\s(])(?:${ABBREVIATIONS.map((a) => a.replace(/\./g, '\\.')).join('|')})$`, 'i');
 
+// Longest line we still treat as a heading when it has no ending punctuation.
+const MAX_HEADING_LENGTH = 70;
+// A line that starts a numbered item: "2. Trademarks", "(a) Scope", "iv. Term", "3) Fees"
+const ROMAN = '(?=[ivx])x{0,3}(?:ix|iv|v?i{0,3})'; // i … xxxix
+const LIST_NUMBER_RE = new RegExp(`^\\(?(\\d+(\\.\\d+)*|${ROMAN}|[a-z])$`, 'i');
+const LIST_ITEM_RE = new RegExp(`^(\\(?\\d+(\\.\\d+)*[.)]|\\([a-z]{1,3}\\)|${ROMAN}\\.)\\s+\\S`, 'i');
+
 /**
- * Split a block of English text into sentences.
- * Handles ., !, ? (with trailing quotes/brackets), common abbreviations, decimals,
- * initials like "J. K. Rowling", and blank-line paragraph breaks.
+ * Does this line look like a heading rather than a wrapped sentence line?
+ * Short, no ending punctuation, and title-like: a numbered item, ALL CAPS,
+ * at most 4 words, or most of its longer words capitalised ("Scope of Protection").
+ * A wrapped line like "A patent is granted under Sec. 48 of the Patents" is not.
+ */
+function looksLikeHeading(line) {
+  if (line.length > MAX_HEADING_LENGTH || /[.!?:;,]["'’”)\]]*$/.test(line)) return false;
+  if (LIST_ITEM_RE.test(line) || line === line.toUpperCase()) return true;
+  const words = line.split(' ');
+  if (words.length <= 4) return true;
+  const longWords = words.filter((w) => /^[A-Za-z]{4,}/.test(w));
+  return longWords.length > 0 && longWords.filter((w) => /^[A-Z]/.test(w)).length / longWords.length >= 0.6;
+}
+
+/**
+ * Re-join wrapped lines into blocks (paragraphs / headings).
+ * Extracted text is messy: pdf-parse separates every line with "\n", and OCR often
+ * puts blank lines *inside* paragraphs. Rules, in order:
+ *  1. "confi-" + "dential"           → hyphenated word re-joined
+ *  2. next line starts lowercase      → same sentence continues (even across a blank line)
+ *  3. blank line, next line uppercase → new paragraph (keeps DOCX paragraphs apart)
+ *  4. next line is a numbered item    → new block ("2. Trademarks")
+ *  5. current line looks like heading → heading becomes its own block
+ *  6. otherwise                       → wrapped line, joined with a space
+ */
+function toBlocks(text) {
+  const blocks = [];
+  let cur = '';
+  let blankSince = false;
+
+  for (const rawLine of String(text).replace(/\r\n?/g, '\n').split('\n')) {
+    const line = rawLine.replace(/\s+/g, ' ').trim();
+    if (!line) {
+      if (cur) blankSince = true;
+      continue;
+    }
+    if (!cur) {
+      cur = line;
+    } else {
+      const startsLower = /^["'‘’“”(\[]*[a-z]/.test(line) && !LIST_ITEM_RE.test(line);
+
+      if (startsLower && /[A-Za-z]-$/.test(cur)) cur = cur.slice(0, -1) + line.replace(/^["'‘’“”]+/, '');
+      else if (startsLower) cur += ' ' + line;
+      else if (blankSince || LIST_ITEM_RE.test(line) || looksLikeHeading(cur)) {
+        blocks.push(cur);
+        cur = line;
+      } else cur += ' ' + line;
+    }
+    blankSince = false;
+  }
+  if (cur) blocks.push(cur);
+  return blocks;
+}
+
+/**
+ * Split English text (from PDF, OCR or DOCX) into sentences.
+ * Handles wrapped lines and headings (see toBlocks), ., !, ? (with trailing
+ * quotes/brackets), common abbreviations, decimals, initials like "J. K. Rowling",
+ * and list numbers like "1. Patents".
  * @param {string} text
  * @returns {string[]}
  */
@@ -211,8 +274,7 @@ function splitSentences(text) {
   if (!text) return [];
   const sentences = [];
 
-  for (const para of String(text).split(/\n\s*\n/)) {
-    const flat = para.replace(/\s+/g, ' ').trim();
+  for (const flat of toBlocks(text)) {
     let start = 0;
     const boundary = /[.!?]+["')\]]*(?=\s+|$)/g;
     let m;
@@ -227,6 +289,7 @@ function splitSentences(text) {
         if (/(?:^|\s)[A-Z]$/.test(before)) continue; // initials: "J. Smith"
         if (/^[a-z0-9]/.test(next)) continue; // lowercase/number after period: not a new sentence
         if (/(?:^|\s)Nos?$/i.test(before) && /^\d/.test(next)) continue; // "No. 5"
+        if (LIST_NUMBER_RE.test(before.trim())) continue; // list number: "1. Patents", "iv. Scope"
       }
       const s = flat.slice(start, end).trim();
       if (s) sentences.push(s);
