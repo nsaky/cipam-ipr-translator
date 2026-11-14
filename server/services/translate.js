@@ -1,12 +1,30 @@
 // server/services/translate.js
-// English -> Indic translation via Groq's free tier (OpenAI-compatible API).
-// Get a free key at https://console.groq.com/keys and set GROQ_API_KEY.
+// English -> Indic translation using a free-tier LLM API (both OpenAI-compatible):
+//   - Google Gemini, if GEMINI_API_KEY is set (free key: https://aistudio.google.com/apikey)
+//   - Groq otherwise, with GROQ_API_KEY       (free key: https://console.groq.com/keys)
 // Requires Node 18+ (built-in fetch). No npm dependencies.
 
-const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+const PROVIDERS = {
+  gemini: {
+    url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+    keyEnv: 'GEMINI_API_KEY',
+    model: () => process.env.GEMINI_MODEL || 'gemini-3.5-flash',
+  },
+  groq: {
+    url: 'https://api.groq.com/openai/v1/chat/completions',
+    keyEnv: 'GROQ_API_KEY',
+    model: () => process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
+  },
+};
 const BATCH_SIZE = 20; // sentences per request; keeps prompts small and inside free-tier token limits
 const MAX_RETRIES = 3;
+const REQUEST_TIMEOUT_MS = 60000; // per API call
+
+function getProvider() {
+  if (process.env.GEMINI_API_KEY) return PROVIDERS.gemini;
+  if (process.env.GROQ_API_KEY) return PROVIDERS.groq;
+  throw new Error('No translation API key set. Add GEMINI_API_KEY (or GROQ_API_KEY) to .env.');
+}
 
 const LANGUAGES = {
   hi: 'Hindi', ta: 'Tamil', te: 'Telugu', bn: 'Bengali', mr: 'Marathi',
@@ -43,29 +61,37 @@ Respond with ONLY a JSON object of the form {"translations": ["...", "..."]}
 containing exactly one translated string per input sentence, in the same order.`;
 }
 
-async function callGroq(messages) {
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) throw new Error('GROQ_API_KEY is not set. Get a free key at https://console.groq.com/keys');
+async function callLLM(messages) {
+  const provider = getProvider();
+  const apiKey = process.env[provider.keyEnv];
 
   for (let attempt = 0; ; attempt++) {
-    const res = await fetch(GROQ_URL, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: MODEL,
-        messages,
-        temperature: 0.1, // low = consistent, formal output
-        response_format: { type: 'json_object' },
-      }),
-    });
+    let res;
+    try {
+      res = await fetch(provider.url, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: provider.model(),
+          messages,
+          temperature: 0.1, // low = consistent, formal output
+          response_format: { type: 'json_object' },
+        }),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS), // never hang a user's request forever
+      });
+    } catch (err) {
+      if (err.name !== 'TimeoutError') throw err;
+      if (attempt >= MAX_RETRIES) throw new Error(`Translation API timed out after ${MAX_RETRIES + 1} attempts.`);
+      continue; // treat a timeout like a temporary 503 and try again
+    }
 
-    // Free tier is rate limited: back off and retry on 429 / 5xx.
+    // Free tier is rate limited / sometimes overloaded: back off and retry on 429 / 5xx.
     if ((res.status === 429 || res.status >= 500) && attempt < MAX_RETRIES) {
       const wait = Number(res.headers.get('retry-after')) || 2 ** attempt * 2;
       await new Promise((r) => setTimeout(r, wait * 1000));
       continue;
     }
-    if (!res.ok) throw new Error(`Groq API error ${res.status}: ${await res.text()}`);
+    if (!res.ok) throw new Error(`Translation API error ${res.status}: ${await res.text()}`);
 
     const data = await res.json();
     return data.choices[0].message.content;
@@ -92,7 +118,7 @@ async function translateBatch(sentences, langName, glossary) {
 
   let outputs;
   for (let attempt = 0; attempt < 2; attempt++) {
-    const raw = await callGroq(messages);
+    const raw = await callLLM(messages);
     try {
       outputs = JSON.parse(raw).translations;
     } catch {
