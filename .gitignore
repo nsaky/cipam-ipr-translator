@@ -1,7 +1,26 @@
+# Environment variables — contains secrets, NEVER commit this file
+.env
 *.env
-*.claude
-skills-lock.json
+
+# Node.js dependencies — installed locally, never committed
 node_modules/
+
+# Uploaded user files — stored locally, can be large and are not source code
+server/uploads/
+
+# Output and temporary files from processing
 output-*.pdf
 *.traineddata
 samples/
+skills-lock.json
+*.claude
+
+# macOS system files
+.DS_Store
+
+# Editor/IDE files
+.vscode/
+.idea/
+
+# npm debug logs
+npm-debug.log*
