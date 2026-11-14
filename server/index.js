@@ -6,7 +6,7 @@
 // Its only jobs are:
 //   1. Load environment variables from the .env file (MUST be first)
 //   2. Import the configured Express app
-//   3. Import the database pool (this triggers the connection test)
+//   3. Test the database connection (Prisma)
 //   4. Start listening for incoming HTTP requests on the specified port
 
 'use strict';
@@ -19,10 +19,9 @@ require('dotenv').config();
 // Step 2: Import the Express app (which is fully configured in app.js)
 const app = require('./app');
 
-// Step 3: Import the database pool.
-// Simply requiring it triggers the connection test in db.js.
-// If the DB is unreachable, db.js will log the error and call process.exit(1).
-require('./config/db');
+// Step 3: Test the database connection (Prisma).
+// If the DB is unreachable, checkConnection logs the error and calls process.exit(1).
+require('./config/db').checkConnection();
 
 // Step 4: Determine which port to listen on.
 // We read from .env first; if not set, we default to 5000.

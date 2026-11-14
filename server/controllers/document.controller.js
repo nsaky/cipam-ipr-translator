@@ -14,7 +14,7 @@
 'use strict';
 
 const fs = require('fs');
-const pool = require('../config/db');
+const prisma = require('../config/db');
 const { getSourceType } = require('../middleware/upload');
 const { extractText } = require('../services/extract');
 const { translate } = require('../services/translate');
@@ -27,6 +27,53 @@ const MIME_TYPES = {
   pdf: 'application/pdf',
 };
 
+/** Load a document's owner info (or null) for existence + ownership checks. */
+function findDocumentOwner(documentId) {
+  return prisma.document.findUnique({
+    where: { id: documentId },
+    select: { id: true, user_id: true, title: true },
+  });
+}
+
+/**
+ * One row per (segment, translation) in segment order, matching what
+ * `segments LEFT JOIN translations` returned: segments without a translation
+ * still appear once, with null translation fields and approved = false.
+ */
+async function segmentTranslationRows(documentId, lang) {
+  const segments = await prisma.segment.findMany({
+    where: { document_id: documentId },
+    orderBy: { position: 'asc' },
+    include: {
+      translations: {
+        where: lang ? { lang } : undefined,
+        orderBy: { lang: 'asc' },
+      },
+    },
+  });
+
+  const rows = [];
+  for (const s of segments) {
+    const translations = s.translations.length > 0 ? s.translations : [null];
+    for (const t of translations) {
+      rows.push({
+        id: t ? t.id : null,
+        translation_id: t ? t.id : null,
+        segment_id: s.id,
+        position: s.position,
+        sentence_number: s.position,
+        source_text: s.source_text,
+        original_text: s.source_text,
+        lang: t ? t.lang : null,
+        machine_text: t ? t.machine_text : null,
+        final_text: t ? t.final_text : null,
+        approved: t ? t.approved : false,
+      });
+    }
+  }
+  return rows;
+}
+
 /**
  * Upload a document, trigger text extraction, and store segments.
  * Method: POST /api/documents
@@ -38,8 +85,6 @@ async function uploadDocument(req, res, next) {
     });
   }
 
-  const client = await pool.connect();
-
   try {
     const userId = req.user.id;
     const originalName = req.file.originalname;
@@ -49,38 +94,28 @@ async function uploadDocument(req, res, next) {
     const sourceType = getSourceType(originalName);
     const filePath = req.file.path;
 
-    await client.query('BEGIN');
-
-    // 1. Insert document record
-    const docInsertResult = await client.query(
-      `INSERT INTO documents (user_id, title, source_type, file_path)
-       VALUES ($1, $2, $3, $4)
-       RETURNING id, user_id, title, source_type, created_at`,
-      [userId, title, sourceType, filePath]
-    );
-
-    const document = docInsertResult.rows[0];
-
-    // 2. Call Person B's extraction service
+    // 1. Call Person B's extraction service first. OCR can take several seconds,
+    //    so it runs outside any database transaction.
     const sentences = await extractText(filePath, sourceType);
 
     if (!Array.isArray(sentences) || sentences.length === 0) {
       throw new Error('Extraction failed to produce text segments.');
     }
 
-    // 3. Insert each sentence segment in sequential order
-    for (let i = 0; i < sentences.length; i++) {
-      const position = i + 1;
-      const sentence = sentences[i].trim();
-
-      await client.query(
-        `INSERT INTO segments (document_id, position, source_text)
-         VALUES ($1, $2, $3)`,
-        [document.id, position, sentence]
-      );
-    }
-
-    await client.query('COMMIT');
+    // 2. Insert the document and all its segments in one atomic write
+    //    (if any insert fails, nothing is saved).
+    const document = await prisma.document.create({
+      data: {
+        user_id: userId,
+        title,
+        source_type: sourceType,
+        file_path: filePath,
+        segments: {
+          create: sentences.map((sentence, i) => ({ position: i + 1, source_text: sentence.trim() })),
+        },
+      },
+      select: { id: true, user_id: true, title: true, source_type: true, created_at: true },
+    });
 
     return res.status(201).json({
       message: 'Document uploaded and extracted successfully.',
@@ -96,9 +131,7 @@ async function uploadDocument(req, res, next) {
       sentence_count: sentences.length,
     });
   } catch (err) {
-    await client.query('ROLLBACK');
-
-    // Clean up uploaded file if database transaction fails
+    // Clean up uploaded file if extraction or the database write fails
     if (req.file && req.file.path && fs.existsSync(req.file.path)) {
       try {
         fs.unlinkSync(req.file.path);
@@ -108,8 +141,6 @@ async function uploadDocument(req, res, next) {
     }
 
     next(err);
-  } finally {
-    client.release();
   }
 }
 
@@ -122,34 +153,21 @@ async function getDocuments(req, res, next) {
     const userId = req.user.id;
 
     // If admin requests all=true, allow viewing all documents; otherwise show user's own
-    let query = `
-      SELECT d.id, d.user_id, d.title, d.source_type, d.created_at,
-             COUNT(s.id)::int AS segment_count
-      FROM documents d
-      LEFT JOIN segments s ON s.document_id = d.id
-      WHERE d.user_id = $1
-      GROUP BY d.id
-      ORDER BY d.created_at DESC
-    `;
-    const params = [userId];
+    const showAll = req.user.role === 'admin' && req.query.all === 'true';
 
-    if (req.user.role === 'admin' && req.query.all === 'true') {
-      query = `
-        SELECT d.id, d.user_id, d.title, d.source_type, d.created_at,
-               COUNT(s.id)::int AS segment_count
-        FROM documents d
-        LEFT JOIN segments s ON s.document_id = d.id
-        GROUP BY d.id
-        ORDER BY d.created_at DESC
-      `;
-      params.pop();
-    }
+    const docs = await prisma.document.findMany({
+      where: showAll ? undefined : { user_id: userId },
+      orderBy: { created_at: 'desc' },
+      select: {
+        id: true, user_id: true, title: true, source_type: true, created_at: true,
+        _count: { select: { segments: true } },
+      },
+    });
 
-    const result = await pool.query(query, params);
-
-    const normalizedDocs = result.rows.map(d => ({
+    const normalizedDocs = docs.map(({ _count, ...d }) => ({
       ...d,
-      sentence_count: d.segment_count,
+      segment_count: _count.segments,
+      sentence_count: _count.segments,
     }));
 
     return res.status(200).json({
@@ -172,14 +190,10 @@ async function getDocumentById(req, res, next) {
     }
 
     // 1. Fetch document record
-    const docResult = await pool.query(
-      `SELECT id, user_id, title, source_type, created_at
-       FROM documents
-       WHERE id = $1`,
-      [documentId]
-    );
-
-    const document = docResult.rows[0];
+    const document = await prisma.document.findUnique({
+      where: { id: documentId },
+      select: { id: true, user_id: true, title: true, source_type: true, created_at: true },
+    });
 
     if (!document) {
       return res.status(404).json({ error: 'Document not found.' });
@@ -193,15 +207,13 @@ async function getDocumentById(req, res, next) {
     }
 
     // 3. Fetch all extracted sentence segments in sequential order
-    const segmentsResult = await pool.query(
-      `SELECT id, position, source_text
-       FROM segments
-       WHERE document_id = $1
-       ORDER BY position ASC`,
-      [documentId]
-    );
+    const segments = await prisma.segment.findMany({
+      where: { document_id: documentId },
+      orderBy: { position: 'asc' },
+      select: { id: true, position: true, source_text: true },
+    });
 
-    const normalizedSegments = segmentsResult.rows.map(s => ({
+    const normalizedSegments = segments.map(s => ({
       id: s.id,
       position: s.position,
       sentence_number: s.position,
@@ -239,14 +251,10 @@ async function deleteDocument(req, res, next) {
     }
 
     // Fetch document to check ownership and retrieve disk file path
-    const docResult = await pool.query(
-      `SELECT id, user_id, file_path
-       FROM documents
-       WHERE id = $1`,
-      [documentId]
-    );
-
-    const document = docResult.rows[0];
+    const document = await prisma.document.findUnique({
+      where: { id: documentId },
+      select: { id: true, user_id: true, file_path: true },
+    });
 
     if (!document) {
       return res.status(404).json({ error: 'Document not found.' });
@@ -260,7 +268,7 @@ async function deleteDocument(req, res, next) {
     }
 
     // Delete record from database (segments delete automatically via ON DELETE CASCADE)
-    await pool.query('DELETE FROM documents WHERE id = $1', [documentId]);
+    await prisma.document.delete({ where: { id: documentId } });
 
     // Delete physical file from disk
     if (document.file_path && fs.existsSync(document.file_path)) {
@@ -306,12 +314,7 @@ async function translateDocument(req, res, next) {
 
   try {
     // 1. Verify document existence and ownership
-    const docResult = await pool.query(
-      `SELECT id, user_id, title FROM documents WHERE id = $1`,
-      [documentId]
-    );
-
-    const document = docResult.rows[0];
+    const document = await findDocumentOwner(documentId);
     if (!document) {
       return res.status(404).json({ error: 'Document not found.' });
     }
@@ -323,15 +326,12 @@ async function translateDocument(req, res, next) {
     }
 
     // 2. Retrieve extracted segments in their sequential order
-    const segmentsResult = await pool.query(
-      `SELECT id, position, source_text
-       FROM segments
-       WHERE document_id = $1
-       ORDER BY position ASC`,
-      [documentId]
-    );
+    const segments = await prisma.segment.findMany({
+      where: { document_id: documentId },
+      orderBy: { position: 'asc' },
+      select: { id: true, position: true, source_text: true },
+    });
 
-    const segments = segmentsResult.rows;
     if (segments.length === 0) {
       return res.status(400).json({
         error: 'Document has no extracted text segments to translate.',
@@ -339,13 +339,10 @@ async function translateDocument(req, res, next) {
     }
 
     // 3. Retrieve official glossary terms for this target language
-    const glossaryResult = await pool.query(
-      `SELECT en_term, approved_term
-       FROM glossary_terms
-       WHERE lang = $1`,
-      [normalizedLang]
-    );
-    const glossary = glossaryResult.rows;
+    const glossary = await prisma.glossaryTerm.findMany({
+      where: { lang: normalizedLang },
+      select: { en_term: true, approved_term: true },
+    });
 
     // 4. Call Person B's translation service
     const sentences = segments.map((s) => s.source_text);
@@ -368,49 +365,32 @@ async function translateDocument(req, res, next) {
       });
     }
 
-    // 5. Store translations atomically using database transaction
-    const client = await pool.connect();
-    const storedTranslations = [];
+    // 5. Store translations atomically (all or nothing).
+    //    UPSERT: re-translating the same segment + language only replaces machine_text,
+    //    so a reviewer's final_text and approval are kept.
+    const upserted = await prisma.$transaction(
+      segments.map((segment, i) =>
+        prisma.translation.upsert({
+          where: { segment_id_lang: { segment_id: segment.id, lang: normalizedLang } },
+          create: { segment_id: segment.id, lang: normalizedLang, machine_text: translatedSentences[i], approved: false },
+          update: { machine_text: translatedSentences[i] },
+        })
+      )
+    );
 
-    try {
-      await client.query('BEGIN');
-
-      for (let i = 0; i < segments.length; i++) {
-        const segment = segments[i];
-        const machineText = translatedSentences[i];
-
-        // UPSERT: If re-translating same segment + language, update machine_text safely
-        const insertRes = await client.query(
-          `INSERT INTO translations (segment_id, lang, machine_text, approved)
-           VALUES ($1, $2, $3, false)
-           ON CONFLICT (segment_id, lang)
-           DO UPDATE SET machine_text = EXCLUDED.machine_text
-           RETURNING id, segment_id, lang, machine_text, final_text, approved`,
-          [segment.id, normalizedLang, machineText]
-        );
-
-        storedTranslations.push({
-          id: insertRes.rows[0].id,
-          translation_id: insertRes.rows[0].id,
-          segment_id: segment.id,
-          position: segment.position,
-          sentence_number: segment.position,
-          source_text: segment.source_text,
-          original_text: segment.source_text,
-          lang: insertRes.rows[0].lang,
-          machine_text: insertRes.rows[0].machine_text,
-          final_text: insertRes.rows[0].final_text,
-          approved: insertRes.rows[0].approved,
-        });
-      }
-
-      await client.query('COMMIT');
-    } catch (txErr) {
-      await client.query('ROLLBACK');
-      throw txErr;
-    } finally {
-      client.release();
-    }
+    const storedTranslations = upserted.map((t, i) => ({
+      id: t.id,
+      translation_id: t.id,
+      segment_id: segments[i].id,
+      position: segments[i].position,
+      sentence_number: segments[i].position,
+      source_text: segments[i].source_text,
+      original_text: segments[i].source_text,
+      lang: t.lang,
+      machine_text: t.machine_text,
+      final_text: t.final_text,
+      approved: t.approved,
+    }));
 
     return res.status(200).json({
       message: 'Translation completed successfully.',
@@ -450,12 +430,7 @@ async function getDocumentTranslations(req, res, next) {
 
   try {
     // 1. Verify document existence and ownership
-    const docResult = await pool.query(
-      `SELECT id, user_id, title FROM documents WHERE id = $1`,
-      [documentId]
-    );
-
-    const document = docResult.rows[0];
+    const document = await findDocumentOwner(documentId);
     if (!document) {
       return res.status(404).json({ error: 'Document not found.' });
     }
@@ -467,59 +442,14 @@ async function getDocumentTranslations(req, res, next) {
     }
 
     // 2. Fetch segments joined with translations
-    let query;
-    let params;
-
-    if (normalizedLang) {
-      query = `
-        SELECT
-          t.id,
-          t.id AS translation_id,
-          s.id AS segment_id,
-          s.position,
-          s.position AS sentence_number,
-          s.source_text,
-          s.source_text AS original_text,
-          t.lang,
-          t.machine_text,
-          t.final_text,
-          COALESCE(t.approved, false) AS approved
-        FROM segments s
-        LEFT JOIN translations t ON t.segment_id = s.id AND t.lang = $2
-        WHERE s.document_id = $1
-        ORDER BY s.position ASC
-      `;
-      params = [documentId, normalizedLang];
-    } else {
-      query = `
-        SELECT
-          t.id,
-          t.id AS translation_id,
-          s.id AS segment_id,
-          s.position,
-          s.position AS sentence_number,
-          s.source_text,
-          s.source_text AS original_text,
-          t.lang,
-          t.machine_text,
-          t.final_text,
-          COALESCE(t.approved, false) AS approved
-        FROM segments s
-        LEFT JOIN translations t ON t.segment_id = s.id
-        WHERE s.document_id = $1
-        ORDER BY s.position ASC, t.lang ASC
-      `;
-      params = [documentId];
-    }
-
-    const result = await pool.query(query, params);
+    const rows = await segmentTranslationRows(documentId, normalizedLang);
 
     return res.status(200).json({
       document_id: documentId,
       lang: normalizedLang || 'all',
-      sentence_count: result.rows.length,
-      sentences: result.rows,
-      translations: result.rows,
+      sentence_count: rows.length,
+      sentences: rows,
+      translations: rows,
     });
   } catch (err) {
     next(err);
@@ -583,12 +513,7 @@ async function exportDocument(req, res, next) {
     }
 
     // 1. Verify document existence and ownership
-    const docResult = await pool.query(
-      `SELECT id, user_id, title FROM documents WHERE id = $1`,
-      [documentId]
-    );
-
-    const document = docResult.rows[0];
+    const document = await findDocumentOwner(documentId);
     if (!document) {
       return res.status(404).json({ error: 'Document not found.' });
     }
@@ -600,26 +525,7 @@ async function exportDocument(req, res, next) {
     }
 
     // 2. Retrieve segments and translations in sequential order
-    const segmentsResult = await pool.query(
-      `SELECT
-         s.id AS segment_id,
-         s.position,
-         s.source_text,
-         t.id AS translation_id,
-         t.lang,
-         t.machine_text,
-         t.final_text,
-         t.approved
-       FROM segments s
-       LEFT JOIN translations t
-         ON t.segment_id = s.id
-         AND t.lang = $2
-       WHERE s.document_id = $1
-       ORDER BY s.position ASC`,
-      [documentId, normalizedLang]
-    );
-
-    const rowsFromDb = segmentsResult.rows;
+    const rowsFromDb = await segmentTranslationRows(documentId, normalizedLang);
 
     if (rowsFromDb.length === 0) {
       return res.status(400).json({

@@ -9,13 +9,28 @@
 // - Deleting glossary entries by ID (path, query, body) or by term (query, body) (restricted to administrators)
 // - Validating supported target languages ('hi', 'mr', 'bn', 'gu', 'ta', 'te')
 // - Enforcing uniqueness constraints on (lang, en_term)
-// - Using parameterized SQL queries throughout
+// - All queries go through Prisma (parameterized)
 
 'use strict';
 
-const pool = require('../config/db');
+const prisma = require('../config/db');
 
 const SUPPORTED_LANGUAGES = ['hi', 'mr', 'bn', 'gu', 'ta', 'te'];
+const TERM_FIELDS = { id: true, en_term: true, lang: true, approved_term: true };
+
+/**
+ * Case-insensitive exact match on en_term (same as LOWER(en_term) = LOWER(value)).
+ * Prisma implements mode: 'insensitive' with ILIKE, where % and _ are wildcards,
+ * so they must be escaped or e.g. a term of "%" would match every row.
+ */
+function enTermEquals(value) {
+  return { equals: value.replace(/[\\%_]/g, '\\$&'), mode: 'insensitive' };
+}
+
+// Unique-constraint violation: Prisma (P2002) or raw Postgres (23505).
+function isUniqueViolation(err) {
+  return err && (err.code === 'P2002' || err.code === '23505');
+}
 
 /**
  * Retrieve glossary terms (optionally filtered by language).
@@ -25,8 +40,7 @@ const SUPPORTED_LANGUAGES = ['hi', 'mr', 'bn', 'gu', 'ta', 'te'];
 async function getGlossaryTerms(req, res, next) {
   try {
     const { lang } = req.query;
-    let query;
-    let params = [];
+    let rows;
 
     if (lang) {
       const normalizedLang = lang.trim().toLowerCase();
@@ -35,31 +49,26 @@ async function getGlossaryTerms(req, res, next) {
           error: `Unsupported language code: "${lang}". Supported: ${SUPPORTED_LANGUAGES.join(', ')}.`,
         });
       }
-      query = `
-        SELECT id, en_term, lang, approved_term
-        FROM glossary_terms
-        WHERE lang = $1
-        ORDER BY en_term ASC
-      `;
-      params = [normalizedLang];
+      rows = await prisma.glossaryTerm.findMany({
+        where: { lang: normalizedLang },
+        select: TERM_FIELDS,
+        orderBy: { en_term: 'asc' },
+      });
     } else {
-      query = `
-        SELECT id, en_term, lang, approved_term
-        FROM glossary_terms
-        ORDER BY lang ASC, en_term ASC
-      `;
+      rows = await prisma.glossaryTerm.findMany({
+        select: TERM_FIELDS,
+        orderBy: [{ lang: 'asc' }, { en_term: 'asc' }],
+      });
     }
 
-    const result = await pool.query(query, params);
-
-    const formattedTerms = result.rows.map(r => ({
+    const formattedTerms = rows.map(r => ({
       ...r,
       term: r.en_term,
     }));
 
     // Group terms by en_term for frontend table presentation
     const termMap = new Map();
-    for (const r of result.rows) {
+    for (const r of rows) {
       const key = r.en_term.toLowerCase();
       if (!termMap.has(key)) {
         termMap.set(key, {
@@ -75,7 +84,7 @@ async function getGlossaryTerms(req, res, next) {
     const groupedList = Array.from(termMap.values());
 
     return res.status(200).json({
-      count: result.rows.length,
+      count: rows.length,
       lang: lang ? lang.trim().toLowerCase() : 'all',
       terms: formattedTerms,
       glossary: groupedList,
@@ -117,38 +126,28 @@ async function createGlossaryTerm(req, res, next) {
         });
       }
 
-      const client = await pool.connect();
-      try {
-        await client.query('BEGIN');
-        const inserted = [];
-
+      // All languages are written in one transaction: either every entry is saved or none.
+      const inserted = await prisma.$transaction(async (tx) => {
+        const out = [];
         for (const lk of langKeys) {
           const approvedVal = translations[lk].trim();
 
-          // Check if entry for (lang, en_term) already exists
-          const check = await client.query(
-            'SELECT id FROM glossary_terms WHERE lang = $1 AND LOWER(en_term) = LOWER($2)',
-            [lk, effectiveTerm]
+          // Update the existing (lang, en_term) entry if there is one, otherwise insert
+          const existing = await tx.glossaryTerm.findFirst({
+            where: { lang: lk, en_term: enTermEquals(effectiveTerm) },
+            select: { id: true },
+          });
+
+          out.push(
+            existing
+              ? await tx.glossaryTerm.update({ where: { id: existing.id }, data: { approved_term: approvedVal }, select: TERM_FIELDS })
+              : await tx.glossaryTerm.create({ data: { en_term: effectiveTerm, lang: lk, approved_term: approvedVal }, select: TERM_FIELDS })
           );
-
-          if (check.rows.length > 0) {
-            const upd = await client.query(
-              'UPDATE glossary_terms SET approved_term = $1 WHERE id = $2 RETURNING id, en_term, lang, approved_term',
-              [approvedVal, check.rows[0].id]
-            );
-            inserted.push(upd.rows[0]);
-          } else {
-            const ins = await client.query(
-              'INSERT INTO glossary_terms (en_term, lang, approved_term) VALUES ($1, $2, $3) RETURNING id, en_term, lang, approved_term',
-              [effectiveTerm, lk, approvedVal]
-            );
-            inserted.push(ins.rows[0]);
-          }
         }
+        return out;
+      });
 
-        await client.query('COMMIT');
-
-        return res.status(201).json({
+      return res.status(201).json({
           message: 'Glossary entry created successfully.',
           term: effectiveTerm,
           translations,
@@ -160,13 +159,7 @@ async function createGlossaryTerm(req, res, next) {
             definition: definition || '',
             translations,
           },
-        });
-      } catch (txErr) {
-        await client.query('ROLLBACK');
-        throw txErr;
-      } finally {
-        client.release();
-      }
+      });
     }
 
     // 2. Single term insertion support (Person A API pattern)
@@ -199,30 +192,28 @@ async function createGlossaryTerm(req, res, next) {
     const trimmedApprovedTerm = approved_term.trim();
 
     // Check for existing duplicate (lang, en_term)
-    const duplicateCheck = await pool.query(
-      `SELECT id FROM glossary_terms WHERE lang = $1 AND LOWER(en_term) = LOWER($2)`,
-      [normalizedLang, trimmedEnTerm]
-    );
+    const duplicate = await prisma.glossaryTerm.findFirst({
+      where: { lang: normalizedLang, en_term: enTermEquals(trimmedEnTerm) },
+      select: { id: true },
+    });
 
-    if (duplicateCheck.rows.length > 0) {
+    if (duplicate) {
       return res.status(409).json({
         error: `A glossary entry for term "${trimmedEnTerm}" in language "${normalizedLang}" already exists.`,
       });
     }
 
-    const insertResult = await pool.query(
-      `INSERT INTO glossary_terms (en_term, lang, approved_term)
-       VALUES ($1, $2, $3)
-       RETURNING id, en_term, lang, approved_term`,
-      [trimmedEnTerm, normalizedLang, trimmedApprovedTerm]
-    );
+    const createdTerm = await prisma.glossaryTerm.create({
+      data: { en_term: trimmedEnTerm, lang: normalizedLang, approved_term: trimmedApprovedTerm },
+      select: TERM_FIELDS,
+    });
 
     return res.status(201).json({
       message: 'Glossary entry created successfully.',
-      term: insertResult.rows[0],
+      term: createdTerm,
     });
   } catch (err) {
-    if (err.code === '23505') {
+    if (isUniqueViolation(err)) {
       return res.status(409).json({
         error: 'A glossary entry for this term and language already exists.',
       });
@@ -272,12 +263,7 @@ async function updateGlossaryTerm(req, res, next) {
   }
 
   try {
-    const existingResult = await pool.query(
-      `SELECT id, en_term, lang, approved_term FROM glossary_terms WHERE id = $1`,
-      [termId]
-    );
-
-    const existing = existingResult.rows[0];
+    const existing = await prisma.glossaryTerm.findUnique({ where: { id: termId }, select: TERM_FIELDS });
     if (!existing) {
       return res.status(404).json({ error: 'Glossary entry not found.' });
     }
@@ -287,31 +273,29 @@ async function updateGlossaryTerm(req, res, next) {
     const newApprovedTerm = approved_term !== undefined ? approved_term.trim() : existing.approved_term;
 
     if (newEnTerm.toLowerCase() !== existing.en_term.toLowerCase() || newLang !== existing.lang) {
-      const dupCheck = await pool.query(
-        `SELECT id FROM glossary_terms WHERE lang = $1 AND LOWER(en_term) = LOWER($2) AND id != $3`,
-        [newLang, newEnTerm, termId]
-      );
-      if (dupCheck.rows.length > 0) {
+      const dup = await prisma.glossaryTerm.findFirst({
+        where: { lang: newLang, en_term: enTermEquals(newEnTerm), id: { not: termId } },
+        select: { id: true },
+      });
+      if (dup) {
         return res.status(409).json({
           error: `A glossary entry for term "${newEnTerm}" in language "${newLang}" already exists.`,
         });
       }
     }
 
-    const updateResult = await pool.query(
-      `UPDATE glossary_terms
-       SET en_term = $1, lang = $2, approved_term = $3
-       WHERE id = $4
-       RETURNING id, en_term, lang, approved_term`,
-      [newEnTerm, newLang, newApprovedTerm, termId]
-    );
+    const updatedTerm = await prisma.glossaryTerm.update({
+      where: { id: termId },
+      data: { en_term: newEnTerm, lang: newLang, approved_term: newApprovedTerm },
+      select: TERM_FIELDS,
+    });
 
     return res.status(200).json({
       message: 'Glossary entry updated successfully.',
-      term: updateResult.rows[0],
+      term: updatedTerm,
     });
   } catch (err) {
-    if (err.code === '23505') {
+    if (isUniqueViolation(err)) {
       return res.status(409).json({
         error: 'A glossary entry for this term and language already exists.',
       });
@@ -337,21 +321,20 @@ async function deleteGlossaryTerm(req, res, next) {
         return res.status(400).json({ error: 'Invalid glossary term ID. Must be a positive integer.' });
       }
 
-      const deleteResult = await pool.query(
-        `DELETE FROM glossary_terms
-         WHERE id = $1
-         RETURNING id, en_term, lang, approved_term`,
-        [termId]
-      );
+      // deleteMany doesn't throw when nothing matches, so we can return a clean 404
+      const [deletedTerm] = await prisma.$transaction([
+        prisma.glossaryTerm.findUnique({ where: { id: termId }, select: TERM_FIELDS }),
+        prisma.glossaryTerm.deleteMany({ where: { id: termId } }),
+      ]);
 
-      if (deleteResult.rows.length === 0) {
+      if (!deletedTerm) {
         return res.status(404).json({ error: 'Glossary entry not found.' });
       }
 
       return res.status(200).json({
         message: 'Glossary entry deleted successfully.',
-        term: deleteResult.rows[0],
-        id: deleteResult.rows[0].id,
+        term: deletedTerm,
+        id: deletedTerm.id,
         success: true,
       });
     }
@@ -359,23 +342,22 @@ async function deleteGlossaryTerm(req, res, next) {
     // Case 2: Term is provided (e.g. DELETE /api/glossary?term=Patent)
     if (rawTerm && typeof rawTerm === 'string' && rawTerm.trim().length > 0) {
       const trimmedTerm = rawTerm.trim();
-      const deleteResult = await pool.query(
-        `DELETE FROM glossary_terms
-         WHERE LOWER(en_term) = LOWER($1)
-         RETURNING id, en_term, lang, approved_term`,
-        [trimmedTerm]
-      );
+      const where = { en_term: enTermEquals(trimmedTerm) };
+      const [deletedTerms] = await prisma.$transaction([
+        prisma.glossaryTerm.findMany({ where, select: TERM_FIELDS, orderBy: { id: 'asc' } }),
+        prisma.glossaryTerm.deleteMany({ where }),
+      ]);
 
-      if (deleteResult.rows.length === 0) {
+      if (deletedTerms.length === 0) {
         return res.status(404).json({
           error: `Glossary entry for term "${trimmedTerm}" not found.`,
         });
       }
 
       return res.status(200).json({
-        message: `Deleted ${deleteResult.rows.length} glossary entry/entries for "${trimmedTerm}".`,
-        deleted_count: deleteResult.rows.length,
-        terms: deleteResult.rows,
+        message: `Deleted ${deletedTerms.length} glossary entry/entries for "${trimmedTerm}".`,
+        deleted_count: deletedTerms.length,
+        terms: deletedTerms,
         term: trimmedTerm,
         success: true,
       });

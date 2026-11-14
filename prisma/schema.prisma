@@ -1,0 +1,83 @@
+// prisma/schema.prisma
+// Database schema for the CIPAM IPR Translator.
+//
+// Column names stay snake_case so API responses keep the same JSON shape the
+// frontend already uses. CHECK constraints (allowed roles, languages, source types)
+// can't be expressed in Prisma, so they live in the SQL migration
+// (prisma/migrations/0_init/migration.sql) and are also validated in the controllers.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// role: 'admin' | 'reviewer' | 'user' (CHECK constraint in migration)
+model User {
+  id            Int        @id @default(autoincrement())
+  name          String     @db.VarChar(100)
+  email         String     @unique(map: "users_email_unique") @db.VarChar(255)
+  password_hash String
+  role          String     @default("reviewer") @db.VarChar(10)
+  created_at    DateTime   @default(now()) @db.Timestamptz(6)
+  documents     Document[]
+
+  @@map("users")
+}
+
+/// source_type: 'docx' | 'pdf' | 'image' (CHECK constraint in migration)
+model Document {
+  id          Int       @id @default(autoincrement())
+  user_id     Int
+  title       String    @db.VarChar(255)
+  source_type String    @db.VarChar(10)
+  file_path   String    @db.VarChar(500)
+  created_at  DateTime  @default(now()) @db.Timestamptz(6)
+  // Restrict: a user who still owns documents can't be deleted.
+  user        User      @relation(fields: [user_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  segments    Segment[]
+
+  @@index([user_id], map: "idx_documents_user_id")
+  @@map("documents")
+}
+
+/// One extracted English sentence. position is 1-based.
+model Segment {
+  id           Int           @id @default(autoincrement())
+  document_id  Int
+  position     Int
+  source_text  String
+  document     Document      @relation(fields: [document_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  translations Translation[]
+
+  @@index([document_id], map: "idx_segments_document_id")
+  @@map("segments")
+}
+
+/// lang: 'hi' | 'mr' | 'bn' | 'gu' | 'ta' | 'te' (CHECK constraint in migration)
+model Translation {
+  id           Int     @id @default(autoincrement())
+  segment_id   Int
+  lang         String  @db.VarChar(5)
+  machine_text String
+  final_text   String? // NULL until a reviewer edits it
+  approved     Boolean @default(false)
+  segment      Segment @relation(fields: [segment_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([segment_id, lang], map: "translations_segment_lang_unique")
+  @@index([segment_id], map: "idx_translations_segment_id")
+  @@map("translations")
+}
+
+/// lang: 'hi' | 'mr' | 'bn' | 'gu' | 'ta' | 'te' (CHECK constraint in migration)
+model GlossaryTerm {
+  id            Int    @id @default(autoincrement())
+  en_term       String @db.VarChar(255)
+  lang          String @db.VarChar(5)
+  approved_term String @db.VarChar(255)
+
+  @@unique([lang, en_term], map: "glossary_terms_lang_en_term_unique")
+  @@map("glossary_terms")
+}

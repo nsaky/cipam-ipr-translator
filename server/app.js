@@ -69,9 +69,9 @@ const glossaryRoutes = require('./routes/glossary.routes');
 
 // Health check handler
 const healthCheckHandler = async (req, res) => {
-  const pool = require('./config/db');
+  const prisma = require('./config/db');
   try {
-    await pool.query('SELECT 1');
+    await prisma.$queryRaw`SELECT 1`;
     res.status(200).json({ status: 'ok', db: 'connected' });
   } catch (err) {
     res.status(500).json({ status: 'error', db: 'disconnected', message: err.message });
