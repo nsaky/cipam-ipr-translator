@@ -1,258 +1,190 @@
-# CIPAM IPR Translator — Frontend Application Reference
+# CIPAM IPR Translator
 
-The **CIPAM IPR Translator** is a specialized, web-based productivity portal designed to translate Intellectual Property Rights (IPR) educational and legal materials from English into six major Indian languages:
-**Hindi (`hi`)**, **Marathi (`mr`)**, **Bengali (`bn`)**, **Gujarati (`gu`)**, **Tamil (`ta`)**, and **Telugu (`te`)**.
+[![Live Deployment](https://img.shields.io/badge/Live%20Demo-Render-00b894?style=for-the-badge&logo=render)](https://cipam-ipr-translator.onrender.com/)
+[![Node.js](https://img.shields.io/badge/Node.js-20.x-339933?style=for-the-badge&logo=nodedotjs)](https://nodejs.org/)
+[![React](https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react)](https://react.dev/)
+[![Express](https://img.shields.io/badge/Express-5-000000?style=for-the-badge&logo=express)](https://expressjs.com/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Neon-4169E1?style=for-the-badge&logo=postgresql)](https://www.postgresql.org/)
+[![Prisma](https://img.shields.io/badge/Prisma-7-2D3748?style=for-the-badge&logo=prisma)](https://www.prisma.io/)
 
-The application accepts source documents (Word `.docx`, text-based `.pdf`, and `.png`/`.jpg`/`.jpeg` image flyers), manages multi-language translation pipelines, provides sentence-aligned bilingual inspection and sentence-level human editing/review, and supports publication-grade DOCX and PDF export alongside a standardized IPR terminology glossary.
-
----
-
-## 1. Technology Stack
-
-- **Framework & Runtime**: React 18 (Functional components with Hooks), Vite 5
-- **Language**: JavaScript (ES6+ / JSX)
-- **Routing**: React Router DOM v6
-- **HTTP Client**: Axios with centralized error interceptors & `withCredentials: true`
-- **Typography & Scripts**: Custom web fonts (`Plus Jakarta Sans`, `Noto Sans Devanagari`, `Noto Sans Bengali`, `Noto Sans Gujarati`, `Noto Sans Tamil`, `Noto Sans Telugu`)
-- **Styling**: Pure semantic CSS with design-system custom properties (Light-mode only, zero heavy external UI libraries)
+> **Live Application**: [https://cipam-ipr-translator.onrender.com/](https://cipam-ipr-translator.onrender.com/)
 
 ---
 
-## 2. Frontend Features
+## 1. Overview
 
-### 2.1 Authentication & Sessions
-- Dual-mode session handling: HTTP-only cookie JWT driver (real backend) and session-persisted mock driver.
-- Route guards: `ProtectedRoute` (blocks unauthenticated visitors) and `PublicOnlyRoute` (redirects logged-in users away from `/login` and `/register`).
-- Input validation, password visibility toggles, and sample credential quick-fill.
+The **CIPAM IPR Translator** is a full-stack web application designed for the **Cell for IPR Promotion and Management (CIPAM)** to translate and localize educational, legal, and operational Intellectual Property Rights (IPR) materials from **English** into **six official Indian languages**:
 
-### 2.2 Dashboard & Document Management
-- **Overview Dashboard**: Dynamically computes repository counts from live records: Total Documents, Recently Uploaded, Awaiting Translation, and Completed Translations.
-- **Repository Listing**: Filterable by format (`PDF`, `DOCX`, `IMAGE`) and status (`UPLOADED`, `PENDING_REVIEW`, `COMPLETED`), searchable by name and author, sortable by upload date or title.
-- **Document Ingestion**: Drag-and-drop file uploader with strict file validation (`≤ 10 MB`, `.docx`, `.pdf`, `.png`, `.jpg`, `.jpeg`) and clear callouts regarding scanned vs text-based PDFs.
-- **Document Details**: Metadata inspector displaying file attributes, MIME type, description, and direct workflow shortcuts.
+- **Hindi (`hi`)**
+- **Marathi (`mr`)**
+- **Bengali (`bn`)**
+- **Gujarati (`gu`)**
+- **Tamil (`ta`)**
+- **Telugu (`te`)**
 
-### 2.3 Language Selection & Translation Pipeline
-- **Language Matrix**: Interactive cards covering the 6 target languages with native script previews, ISO codes, and descriptions.
-- **Batch Translation**: Dispatches independent translation requests per language conforming to `POST /documents/:id/translate { "lang": "code" }`.
-- **Live Progress**: Per-language status indicators (`Queued`, `Translating`, `Completed`, `Failed`) with independent retry controls.
-
-### 2.4 Translation Results & Sentence Review
-- **Bilingual Results**: Side-by-side sentence view paired 1-to-1 in strict original order with native script typography.
-- **Sentence Review & Editing**:
-  - Tri-pane interface: **Original English** (read-only), **Machine Translation** (read-only baseline), and **Final Translation** (human-editable).
-  - Unsaved change tracking, inline save confirmation, and navigation protection modal.
-  - Sentence-level **Approve** and **Reopen** actions; editing an approved sentence automatically clears approval.
-
-### 2.5 Export & Download Workflow
-- Formats supported: Microsoft Word (`.docx`) and Portable Document Format (`.pdf`).
-- Dispatches `GET /documents/:id/export?lang=...&format=...` with binary blob handling and automatic download triggering.
-- Warns users when attempting export with unapproved sentences.
-
-### 2.6 IPR Terminology Glossary
-- Comprehensive dictionary of official IPR concepts across English and all 6 Indian languages.
-- Real-time search across English source terms, definitions, and regional script translations.
-- Role-aware permissions: all authenticated users can browse and filter; administrators can add and delete entries.
+The platform automates document parsing (DOCX, PDF, and image flyers via OCR), sentence-level text segmentation, domain-specific AI translation (Gemini / Groq) with glossary constraints, bilingual sentence review & human verification, and export to formatted DOCX and publication-grade PDF documents.
 
 ---
 
-## 3. Project Directory Structure
+## 2. Core Workflow
 
-```text
-client/
-├── public/
-├── src/
-│   ├── config/
-│   │   └── languages.js             # Centralized 6 target languages config, ISO codes, and script fonts
-│   ├── context/
-│   │   └── AuthContext.jsx          # User session, login, registration, logout, role evaluation
-│   ├── components/
-│   │   ├── MainLayout.jsx           # App shell: collapsible sidebar, responsive topbar, mobile drawer
-│   │   ├── ProtectedRoute.jsx       # Route guards for public and authenticated routes
-│   │   └── SentenceReviewCard.jsx   # Tri-pane sentence editing card with unsaved tracking & approval actions
-│   ├── pages/
-│   │   ├── Login.jsx                # Official CIPAM sign-in portal
-│   │   ├── Register.jsx             # New user registration with password validation
-│   │   ├── Dashboard.jsx            # Repository summary statistics and quick actions
-│   │   ├── Documents.jsx            # Document repository table with search, filters, and sorting
-│   │   ├── DocumentDetails.jsx      # Document metadata inspector and workflow entry point
-│   │   ├── UploadDocument.jsx       # Drag-and-drop document upload interface
-│   │   ├── LanguageSelection.jsx    # Target language selector with multi-select controls
-│   │   ├── TranslationWorkflow.jsx  # Execution pipeline tracking per-language progress
-│   │   ├── TranslationResults.jsx   # Bilingual aligned sentence comparison view
-│   │   ├── TranslationReview.jsx    # Sentence-by-sentence review, editing, and approval workspace
-│   │   ├── ExportDocument.jsx       # DOCX / PDF export interface with review validation
-│   │   └── Glossary.jsx             # IPR terminology dictionary with admin controls
-│   ├── services/
-│   │   ├── api.js                   # Central Axios client with baseUrl and withCredentials: true
-│   │   ├── authService.js           # Auth driver (mock vs real backend cookies)
-│   │   ├── documentService.js       # Document repository driver (mock vs real endpoints)
-│   │   ├── translationService.js    # Translation, review save, and approval driver
-│   │   ├── exportService.js         # Binary DOCX/PDF export and download driver
-│   │   └── glossaryService.js       # IPR terminology CRUD driver
-│   ├── App.jsx                      # Route registry
-│   ├── main.jsx                     # Application bootstrap
-│   └── index.css                    # Unified design system and component styling
-├── .env                             # Active environment configuration
-├── .env.example                     # Environment template
-├── index.html                       # HTML entry point with Indic Google fonts
-├── package.json                     # Client dependencies
-└── vite.config.js                   # Vite configuration
+```mermaid
+flowchart LR
+    A["Upload Document\n(DOCX, PDF, Images)"] --> B["Text Extraction\n& Sentence Splitting"]
+    B --> C["Select Target\nLanguages (1 to 6)"]
+    C --> D["Contextual Translation\n(Gemini / Groq + Glossary)"]
+    D --> E["Bilingual Review\n& Sentence Editing"]
+    E --> F["Reviewer Approval"]
+    F --> G["Export & Download\n(DOCX / PDF)"]
 ```
 
----
-
-## 4. Application Routes
-
-| Path | Access | Description |
-|---|---|---|
-| `/login` | Public only | User login screen |
-| `/register` | Public only | User registration screen |
-| `/dashboard` | Protected | Dashboard overview with repository statistics |
-| `/documents` | Protected | Document repository with search, filter, and sorting |
-| `/documents/:id` | Protected | Document metadata and details view |
-| `/documents/:id/languages` | Protected | Language selection screen for translation |
-| `/documents/:id/translate` | Protected | Multi-language translation pipeline progress |
-| `/documents/:id/results` | Protected | Bilingual paired sentence results view |
-| `/documents/:id/review` | Protected | Sentence-by-sentence editing and approval interface |
-| `/documents/:id/export` | Protected | DOCX and PDF export selection and download |
-| `/upload` | Protected | Document ingestion screen |
-| `/glossary` | Protected | IPR terminology dictionary (Admin add/delete) |
+1. **Document Ingestion**: Upload `.docx`, text-based `.pdf`, and `.png`/`.jpg` images (max 10 MB). Text extracted using `mammoth`, `pdf-parse`, and `tesseract.js`.
+2. **Translation Pipeline**: High-accuracy translation via Google Gemini or Groq LLMs with automatic IPR glossary substitution.
+3. **Bilingual Review & Editing**: Side-by-side view with three tiers per sentence:
+   - `original_text`: Read-only English source.
+   - `machine_text`: Read-only baseline from translation engine.
+   - `final_text`: Editable translation for human review.
+4. **Approval & Verification**: Sentences can be independently approved or reopened. Any new edit on an approved sentence resets approval status for re-verification.
+5. **Export Engine**: Generates formatted Word documents (`.docx`) or PDFs with embedded regional Indic scripts (`Noto Sans`).
+6. **IPR Glossary**: Searchable terminology dictionary. Administrators can add and delete standard terms and translations.
 
 ---
 
-## 5. API Contract Reference
+## 3. Technology Stack
 
-The frontend is architected to interact with Person A's Express / PostgreSQL backend and Person B's processing services through the following REST endpoints:
-
-### 5.1 Authentication
-- `POST /auth/register` — Body: `{ name, email, password }`
-- `POST /auth/login` — Body: `{ email, password }`
-- `POST /auth/logout` — Clears server-side HTTP-only session cookie
-- `GET /auth/me` — Returns current authenticated user `{ id, name, email, role }`
-
-### 5.2 Documents
-- `POST /documents` — Multipart `FormData` containing `document` file and optional `description`
-- `GET /documents` — Returns array of documents `[ { id, name, fileType, fileSize, uploadDate, status } ]`
-- `GET /documents/:id` — Returns single document metadata
-
-### 5.3 Translation
-- `POST /documents/:id/translate` — Body: `{ "lang": "hi" }` *(Accepts exactly one language code per request)*
-- `GET /documents/:id/translations?lang=hi` — Returns sentence records for the specified language
-
-### 5.4 Sentence Review & Approval
-- `PATCH /translations/:id` — Updates individual sentence record:
-  - To save human edits: `{ "final_text": "Updated sentence text" }`
-  - To update approval: `{ "approved": true }` or `{ "approved": false }`
-
-### 5.5 Export
-- `GET /documents/:id/export?lang=hi&format=docx`
-- `GET /documents/:id/export?lang=ta&format=pdf`
-- Must return raw binary file with `Content-Disposition: attachment; filename="..."`
-
-### 5.6 Glossary
-- `GET /glossary` — Returns all glossary entries
-- `POST /glossary` — Admin only. Body: `{ term, category, definition, translations: { hi, mr, bn, gu, ta, te } }`
-- `DELETE /glossary` — Admin only. Query / body: `{ id, term }`
+| Layer | Technologies |
+|:---|:---|
+| **Frontend** | React 18, Vite 5, React Router DOM v6, Axios, Custom Light-Mode Design System |
+| **Backend** | Node.js 20+, Express 5, Prisma ORM 7, PostgreSQL (Neon Serverless) |
+| **Security** | HTTP-only JWT cookies (`SameSite=Strict`), `helmet`, `cors`, `express-rate-limit`, `bcrypt` |
+| **Document Processing** | `mammoth` (DOCX), `pdf-parse` (PDF), `tesseract.js` (OCR), `docx` (Word generation), `puppeteer` (PDF generation) |
+| **AI Translation** | Google Gemini API (`gemini-2.5-flash`) / Groq API (`llama-3.3-70b-versatile`) |
+| **Deployment** | Docker, Render Cloud Platform |
 
 ---
 
-## 6. Frontend Normalized Data Structures
+## 4. API Reference
 
-### Document Object
-```json
-{
-  "id": "doc_101",
-  "name": "Patents_Filing_Guidelines.docx",
-  "fileType": "docx",
-  "fileSize": 1548288,
-  "uploadDate": "2026-11-12T14:30:00.000Z",
-  "status": "COMPLETED",
-  "uploadedBy": "Dr. Rajesh Kumar",
-  "description": "Procedure for filing patent applications under expedited examination."
-}
-```
+All routes are mounted under `/api/*` (and root `/*` for backward compatibility). Protected endpoints require HTTP-only JWT authentication.
 
-### Sentence / Translation Review Record
-```json
-{
-  "id": "trans_doc_101_hi_1",
-  "sentenceNumber": 1,
-  "original_text": "Intellectual property refers to creations of the mind.",
-  "machine_text": "बौद्धिक संपदा मन की रचनाओं को संदर्भित करती है।",
-  "final_text": "बौद्धिक संपदा मन की रचनाओं को संदर्भित करती है।",
-  "approved": true
-}
-```
+### Authentication (`/api/auth`)
+- `POST /api/auth/register` — Create a new user account (`name`, `email`, `password`)
+- `POST /api/auth/login` — Sign in and receive secure HTTP-only session cookie
+- `POST /api/auth/logout` — Clear session cookie
+- `GET /api/auth/me` — Get current user profile and role
 
-### Glossary Entry
-```json
-{
-  "id": "glo_2",
-  "term": "Patent",
-  "category": "Industrial Property",
-  "definition": "Exclusive legal right granted for an invention for a limited period.",
-  "translations": {
-    "hi": "पेटेंट",
-    "mr": "पेटंट",
-    "bn": "পেটেন্ট",
-    "gu": "પેટન્ટ",
-    "ta": "காப்புரிமை",
-    "te": "పేటెంట్"
-  },
-  "createdBy": "CIPAM Admin"
-}
-```
+### Documents (`/api/documents`)
+- `POST /api/documents` — Multipart upload (`document` file, `description`). Extracts and segments text.
+- `GET /api/documents` — List uploaded documents
+- `GET /api/documents/:id` — Get document details and available translations
+
+### Translation & Review
+- `POST /api/documents/:id/translate` — Initiate translation for a target language (`{ "lang": "hi" }`)
+- `GET /api/documents/:id/translations?lang=hi` — Retrieve translated sentences
+- `PATCH /api/translations/:id` — Update sentence:
+  - Edit text: `{ "final_text": "..." }`
+  - Approval: `{ "approved": true }` or `{ "approved": false }`
+
+### Export (`/api/documents/:id/export`)
+- `GET /api/documents/:id/export?lang=hi&format=docx` — Download Word document
+- `GET /api/documents/:id/export?lang=ta&format=pdf` — Download PDF document
+
+### Glossary (`/api/glossary`)
+- `GET /api/glossary` — List standardized IPR terminology across all 6 languages
+- `POST /api/glossary` — *(Admin Only)* Add a new term and translations
+- `DELETE /api/glossary` — *(Admin Only)* Remove a glossary entry
 
 ---
 
-## 7. Environment Configuration
+## 5. Environment Configuration
 
-Template available in `client/.env.example`:
-
+### Root `.env` (Backend & Production)
 ```ini
-# Backend API Base URL
+PORT=5000
+NODE_ENV=production
+
+# Database (PostgreSQL / Neon)
+DATABASE_URL=postgresql://<username>:<password>@<host>/<database>?sslmode=require
+DIRECT_URL=postgresql://<username>:<password>@<direct_host>/<database>?sslmode=require
+
+# Security
+JWT_SECRET=<your_random_jwt_secret_32_chars_min>
+FRONTEND_URL=https://cipam-ipr-translator.onrender.com
+
+# AI Translation Engine (Provide at least one)
+GEMINI_API_KEY=<your_gemini_api_key>
+GROQ_API_KEY=<your_groq_api_key>
+```
+
+### `client/.env` (Frontend Local Development)
+```ini
 VITE_API_URL=http://localhost:5000
 
-# Set to 'false' to connect to live backend services
-VITE_USE_MOCK_AUTH=true
-VITE_USE_MOCK_DOCUMENTS=true
-VITE_USE_MOCK_TRANSLATIONS=true
-VITE_USE_MOCK_EXPORTS=true
-VITE_USE_MOCK_GLOSSARY=true
+# Set to 'false' to communicate with live backend
+# Set to 'true' to run fully offline using browser mock storage
+VITE_USE_MOCK_AUTH=false
+VITE_USE_MOCK_DOCUMENTS=false
+VITE_USE_MOCK_TRANSLATIONS=false
+VITE_USE_MOCK_EXPORTS=false
+VITE_USE_MOCK_GLOSSARY=false
 ```
 
-To run against Person A's backend, simply set `VITE_USE_MOCK_*=false` and provide the live `VITE_API_URL`.
+---
+
+## 6. Quick Start & Local Setup
+
+### 1. Clone & Install
+```bash
+git clone https://github.com/nsaky/cipam-ipr-translator.git
+cd cipam-ipr-translator
+
+# Install backend dependencies
+npm install
+
+# Install frontend dependencies
+cd client && npm install && cd ..
+```
+
+### 2. Database Migrations & Seeds
+```bash
+# Apply Prisma database migrations
+npx prisma migrate deploy
+
+# Seed standardized IPR glossary terms
+npm run db:seed
+
+# (Optional) Seed default Admin account (admin@cipam.gov.in / Admin123!)
+npm run db:seed-admin
+```
+
+### 3. Run Application
+
+#### Production / Monorepo Mode (Recommended)
+```bash
+# Build React frontend
+cd client && npm run build && cd ..
+
+# Start Express server (serves API and client on port 5000)
+npm start
+```
+Open [http://localhost:5000](http://localhost:5000).
+
+#### Development Mode (Concurrent)
+- **Backend API**: `npm run dev` (Runs on `http://localhost:5000`)
+- **Frontend Client**: `cd client && npm run dev` (Runs on `http://localhost:5173`)
 
 ---
 
-## 8. Installation & Local Development
+## 7. Development Team
 
-1. Navigate to the client directory:
-   ```bash
-   cd client
-   ```
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Run the development server:
-   ```bash
-   npm run dev
-   ```
-4. Build for production:
-   ```bash
-   npm run build
-   ```
+| Developer | Role & Responsibilities | GitHub Profile |
+|:---|:---|:---|
+| **Yasir Eqbal** | Frontend Architecture, UI/UX, Review System & Client Integration | [@nsaky](https://github.com/nsaky) |
+| **Injora** | Document Processing, Sentence Segmentation, Translation & Export Services | [@Injora](https://github.com/Injora) |
+| **Meka Vikas** | Backend Infrastructure, Database Architecture, Security & REST APIs | [@MEKAVIKAS](https://github.com/MEKAVIKAS) |
 
 ---
 
-## 9. Backend Integration Guide (Person A & Person B)
+## 8. License
 
-1. **CORS & Cookies**: Person A's Express app must allow credentials from the client origin:
-   ```javascript
-   app.use(cors({ origin: 'http://localhost:5173', credentials: true }));
-   ```
-2. **Stable Sentence IDs**: When sentences are split and translated, each sentence in the database must have a stable, unique primary key so that `PATCH /translations/:id` can update `final_text` or `approved` without ambiguity.
-3. **Preserve Baseline Translation**: Store `machine_text` separately from `final_text` in the PostgreSQL database so human revisions never overwrite the original machine translation.
-4. **Binary Export**: The export endpoint must send raw binary buffers (generated via Person B's `exportDocx` / `exportPdf`) with appropriate MIME headers (`application/vnd.openxmlformats-officedocument.wordprocessingml.document` or `application/pdf`).
-5. **Admin Authorization**: While the frontend conditionally hides Add/Delete actions based on the session `role`, Person A's backend must verify session JWTs and return `403 Forbidden` for unauthorized requests to `POST /glossary` and `DELETE /glossary`.
+This project is licensed under the ISC License.
